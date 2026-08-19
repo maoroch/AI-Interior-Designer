@@ -107,6 +107,84 @@ def test_no_openings_when_walls_are_solid():
     assert all_openings == []
 
 
+def test_distinguishes_exterior_windows_and_interior_doors():
+    """Проверяет, что система безошибочно определяет фасадные проёмы как window,
+    а межкомнатные как door."""
+    img = np.full((400, 500), 255, dtype=np.uint8)
+    thickness = 6
+
+    # Внешний периметр (50, 50) до (450, 350)
+    # На верхней фасадной стене — окно разрывом (180..280)
+    cv2.line(img, (50, 50), (180, 50), 0, thickness)
+    cv2.line(img, (280, 50), (450, 50), 0, thickness)
+    cv2.line(img, (450, 50), (450, 350), 0, thickness)
+    cv2.line(img, (50, 350), (450, 350), 0, thickness)
+    cv2.line(img, (50, 50), (50, 350), 0, thickness)
+
+    # Внутренняя межкомнатная стена x=250 от y=50 до y=350 с дверным проёмом (y=150..230)
+    cv2.line(img, (250, 50), (250, 150), 0, thickness)
+    cv2.line(img, (250, 230), (250, 350), 0, thickness)
+
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    result = segment_floor_plan(buf.tobytes())
+
+    all_openings = [o for r in result.room_polygons for w in r.walls for o in w.openings]
+    types = {o.type for o in all_openings}
+
+    # В результате должны быть и окна, и двери
+    assert "window" in types, "Фасадный проём должен быть распознан как окно (window)"
+    assert "door" in types, "Межкомнатный проём должен быть распознан как дверь (door)"
+
+
+def test_wide_interior_opening_is_classified_as_door():
+    """Широкий межкомнатный проём (1.6м) всё равно должен быть дверью/проходом, а не окном."""
+    img = np.full((400, 500), 255, dtype=np.uint8)
+    thickness = 6
+
+    # Сплошной внешний периметр
+    cv2.rectangle(img, (50, 50), (450, 350), 0, thickness)
+
+    # Внутренняя стена с широким проёмом 80px = 1.6м (y=140..220)
+    cv2.line(img, (250, 50), (250, 140), 0, thickness)
+    cv2.line(img, (250, 220), (250, 350), 0, thickness)
+
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    result = segment_floor_plan(buf.tobytes())
+
+    interior_openings = [
+        o for r in result.room_polygons for w in r.walls if abs(w.start[0] - 5.0) < 0.5 and abs(w.end[0] - 5.0) < 0.5 for o in w.openings
+    ]
+    assert len(interior_openings) >= 1
+    for o in interior_openings:
+        assert o.type == "door", f"Межкомнатный проём не должен быть окном: {o}"
+
+
+def test_narrow_exterior_opening_is_classified_as_window():
+    """Узкий проём на фасадной стене (0.8м) должен классифицироваться как окно."""
+    img = np.full((300, 300), 255, dtype=np.uint8)
+    thickness = 6
+
+    # Окно шириной 40px = 0.8м на верхней фасадной стене
+    cv2.line(img, (50, 50), (130, 50), 0, thickness)
+    cv2.line(img, (170, 50), (250, 50), 0, thickness)
+    cv2.line(img, (250, 50), (250, 250), 0, thickness)
+    cv2.line(img, (50, 250), (250, 250), 0, thickness)
+    cv2.line(img, (50, 50), (50, 250), 0, thickness)
+
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    result = segment_floor_plan(buf.tobytes())
+
+    exterior_openings = [
+        o for r in result.room_polygons for w in r.walls if abs(w.start[1] - 1.0) < 0.3 and abs(w.end[1] - 1.0) < 0.3 for o in w.openings
+    ]
+    assert len(exterior_openings) >= 1
+    for o in exterior_openings:
+        assert o.type == "window", f"Фасадный проём должен быть окном: {o}"
+
+
 def test_empty_image_returns_no_rooms():
     img = np.full((200, 200), 255, dtype=np.uint8)
     ok, buf = cv2.imencode(".png", img)
@@ -117,4 +195,5 @@ def test_empty_image_returns_no_rooms():
 def test_invalid_bytes_raise_value_error():
     with pytest.raises(ValueError):
         segment_floor_plan(b"not an image")
+
 

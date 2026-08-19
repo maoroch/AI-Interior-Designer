@@ -238,8 +238,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             pixels_per_meter=pixels_per_meter,
         )
 
-    detected_polygons: list[RoomPolygon] = []
-
+    raw_boxes: list[list[int]] = []
     for label in valid_labels:
         bx = stats[label, cv2.CC_STAT_LEFT]
         by = stats[label, cv2.CC_STAT_TOP]
@@ -256,6 +255,27 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         if abs((by + bh_room) - (oy + oh)) < 25:
             bh_room = (oy + oh) - by
 
+        raw_boxes.append([int(bx), int(by), int(bw_room), int(bh_room)])
+
+    # Привязка (snap) смежных межкомнатных перегородок к центру линии стены
+    for i in range(len(raw_boxes)):
+        for j in range(i + 1, len(raw_boxes)):
+            b1, b2 = raw_boxes[i], raw_boxes[j]
+            r1, l2 = b1[0] + b1[2], b2[0]
+            if 0 <= (l2 - r1) <= 35:
+                mid_x = (r1 + l2) // 2
+                b1[2] = mid_x - b1[0]
+                b2[2] = (b2[0] + b2[2]) - mid_x
+                b2[0] = mid_x
+            bot1, top2 = b1[1] + b1[3], b2[1]
+            if 0 <= (top2 - bot1) <= 35:
+                mid_y = (bot1 + top2) // 2
+                b1[3] = mid_y - b1[1]
+                b2[3] = (b2[1] + b2[3]) - mid_y
+                b2[1] = mid_y
+
+    detected_polygons: list[RoomPolygon] = []
+    for bx, by, bw_room, bh_room in raw_boxes:
         pts_m = [
             (round(bx / pixels_per_meter, 2), round(by / pixels_per_meter, 2)),
             (round((bx + bw_room) / pixels_per_meter, 2), round(by / pixels_per_meter, 2)),
