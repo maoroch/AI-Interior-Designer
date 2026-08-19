@@ -146,7 +146,8 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
     height, width = image.shape
     pixels_per_meter = 50.0
 
-    _, wall_mask = cv2.threshold(image, WALL_INTENSITY_THRESHOLD, 255, cv2.THRESH_BINARY_INV)
+    # 1. Бинаризация: тёмные пиксели стен (< 140)
+    _, wall_mask = cv2.threshold(image, 140, 255, cv2.THRESH_BINARY_INV)
 
     wall_pixel_coords = cv2.findNonZero(wall_mask)
     if wall_pixel_coords is None:
@@ -160,30 +161,39 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             room_polygons=[], image_width=width, image_height=height, pixels_per_meter=pixels_per_meter
         )
 
-    # 1. Закрываем дверные проёмы (до 50-80px), чтобы изолировать контуры отдельных комнат
-    close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (45, 45))
-    closed_walls = cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE, close_k)
+    # 2. Выделяем прямые горизонтальные и вертикальные линии стен
+    walls_clean = cv2.morphologyEx(wall_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4)))
 
-    # 2. Маскируем внутреннее пространство квартиры
+    h_walls = cv2.morphologyEx(walls_clean, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (20, 3)))
+    v_walls = cv2.morphologyEx(walls_clean, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 20)))
+
+    # 3. Направленное продление линий для перекрытия дверных проёмов (до 250px)
+    h_ext = cv2.dilate(h_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (300, 1)))
+    v_ext = cv2.dilate(v_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 300)))
+
+    grid = cv2.bitwise_or(h_ext, v_ext)
+    cv2.rectangle(grid, (ox, oy), (ox + ow, oy + oh), 255, 12)
+
+    # 4. Маскируем внутреннее пространство квартиры
     inside_mask = np.zeros_like(wall_mask)
-    inside_mask[oy : oy + oh, ox : ox + ow] = 255
-    rooms_space = cv2.bitwise_and(cv2.bitwise_not(closed_walls), inside_mask)
+    inside_mask[oy + 8 : oy + oh - 8, ox + 8 : ox + ow - 8] = 255
+    rooms_space = cv2.bitwise_and(cv2.bitwise_not(grid), inside_mask)
 
-    # 3. Находим связные компоненты внутренних комнат
+    # 5. Находим связные компоненты внутренних комнат
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(rooms_space, connectivity=4)
 
     min_area_px = int(pixels_per_meter * pixels_per_meter * 2.5)  # 2.5 кв.м
-    max_area_px = int(pixels_per_meter * pixels_per_meter * 150.0) # 150 кв.м
+    max_area_px = int(pixels_per_meter * pixels_per_meter * 160.0) # 160 кв.м
 
     valid_labels = [
         l
         for l in range(1, num_labels)
         if stats[l, cv2.CC_STAT_AREA] >= min_area_px
-        and stats[l, cv2.CC_STAT_WIDTH] >= 35
-        and stats[l, cv2.CC_STAT_HEIGHT] >= 35
+        and stats[l, cv2.CC_STAT_WIDTH] >= 30
+        and stats[l, cv2.CC_STAT_HEIGHT] >= 30
     ]
 
-    # Если комната одна (студия или тест без внутренних перегородок), привязываем к внешним границам
+    # Если комната одна (студия или синтетический тест без внутренних стен)
     if len(valid_labels) <= 1:
         corners_px = [(ox, oy), (ox + ow, oy), (ox + ow, oy + oh), (ox, oy + oh)]
         pts_m = [(round(px / pixels_per_meter, 2), round(py / pixels_per_meter, 2)) for px, py in corners_px]
@@ -206,7 +216,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         bw_room = stats[label, cv2.CC_STAT_WIDTH]
         bh_room = stats[label, cv2.CC_STAT_HEIGHT]
 
-        # Привязка (snap) к внешним границам несущих стен
+        # Привязка (snap) к внешним несущим стенам
         if abs(bx - ox) < 25:
             bx = ox
         if abs(by - oy) < 25:
@@ -236,5 +246,6 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         image_height=height,
         pixels_per_meter=pixels_per_meter,
     )
+
 
 
