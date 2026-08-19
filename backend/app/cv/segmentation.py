@@ -193,34 +193,49 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
     # 2. Выделяем прямые горизонтальные и вертикальные линии стен
     walls_clean = cv2.morphologyEx(wall_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4)))
 
-    h_walls = cv2.morphologyEx(walls_clean, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (20, 3)))
-    v_walls = cv2.morphologyEx(walls_clean, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 20)))
+    h_walls = cv2.morphologyEx(walls_clean, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (18, 3)))
+    v_walls = cv2.morphologyEx(walls_clean, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 18)))
 
-    # 3. Направленное продление линий для перекрытия дверных проёмов (до 250px)
-    h_ext = cv2.dilate(h_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (300, 1)))
-    v_ext = cv2.dilate(v_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 300)))
+    # 3. Направленное продление линий для перекрытия дверных проёмов (до 180px)
+    h_ext = cv2.dilate(h_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (180, 1)))
+    v_ext = cv2.dilate(v_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 180)))
 
     grid = cv2.bitwise_or(h_ext, v_ext)
     cv2.rectangle(grid, (ox, oy), (ox + ow, oy + oh), 255, 12)
 
-    # 4. Маскируем внутреннее пространство квартиры
+    # 4. Маскируем внутреннее пространство квартиры (строго внутри несущих стен)
     inside_mask = np.zeros_like(wall_mask)
-    inside_mask[oy + 8 : oy + oh - 8, ox + 8 : ox + ow - 8] = 255
+    inside_mask[oy + 10 : oy + oh - 10, ox + 10 : ox + ow - 10] = 255
     rooms_space = cv2.bitwise_and(cv2.bitwise_not(grid), inside_mask)
 
     # 5. Находим связные компоненты внутренних комнат
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(rooms_space, connectivity=4)
 
-    min_area_px = int(pixels_per_meter * pixels_per_meter * 2.5)  # 2.5 кв.м
-    max_area_px = int(pixels_per_meter * pixels_per_meter * 160.0) # 160 кв.м
+    # Минимальная площадь комнаты >= 3.8 кв.м, минимальная ширина/глубина >= 1.5м (75px)
+    min_area_px = int(pixels_per_meter * pixels_per_meter * 3.8)
+    max_area_px = int(pixels_per_meter * pixels_per_meter * 180.0)
 
-    valid_labels = [
-        l
-        for l in range(1, num_labels)
-        if stats[l, cv2.CC_STAT_AREA] >= min_area_px
-        and stats[l, cv2.CC_STAT_WIDTH] >= 30
-        and stats[l, cv2.CC_STAT_HEIGHT] >= 30
-    ]
+    valid_labels = []
+    for l in range(1, num_labels):
+        area = stats[l, cv2.CC_STAT_AREA]
+        rw = stats[l, cv2.CC_STAT_WIDTH]
+        rh = stats[l, cv2.CC_STAT_HEIGHT]
+        aspect = max(rw / max(1, rh), rh / max(1, rw))
+        rx = stats[l, cv2.CC_STAT_LEFT]
+        ry = stats[l, cv2.CC_STAT_TOP]
+
+        # Исключаем артефакты вне периметра, узкие полосы (aspect > 3.2) и микро-карманы
+        if (
+            min_area_px <= area <= max_area_px
+            and rw >= 60
+            and rh >= 60
+            and aspect <= 3.2
+            and rx >= ox
+            and ry >= oy
+            and (rx + rw) <= (ox + ow + 5)
+            and (ry + rh) <= (oy + oh + 5)
+        ):
+            valid_labels.append(l)
 
     # Если комната одна (студия или синтетический тест без внутренних стен)
     if len(valid_labels) <= 1:
@@ -273,6 +288,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
                 b1[3] = mid_y - b1[1]
                 b2[3] = (b2[1] + b2[3]) - mid_y
                 b2[1] = mid_y
+
 
     detected_polygons: list[RoomPolygon] = []
     for bx, by, bw_room, bh_room in raw_boxes:
