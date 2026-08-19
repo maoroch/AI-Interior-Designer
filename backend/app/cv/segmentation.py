@@ -206,29 +206,50 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             detected_windows_boxes.append((bx, by, bw, bh))
 
     # 3. Выделяем прямые горизонтальные и вертикальные линии стен
-    h_walls = cv2.morphologyEx(structural_walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (16, 3)))
-    v_walls = cv2.morphologyEx(structural_walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 16)))
+    h_walls = cv2.morphologyEx(structural_walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (14, 3)))
+    v_walls = cv2.morphologyEx(structural_walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 14)))
 
-    # Продление линий для перекрытия проёмов
-    h_ext = cv2.dilate(h_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (140, 1)))
-    v_ext = cv2.dilate(v_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 140)))
-
-    grid = cv2.bitwise_or(h_ext, v_ext)
+    # Базовая сетка с внешним периметром
+    grid = np.zeros_like(wall_mask)
     cv2.rectangle(grid, (ox, oy), (ox + ow, oy + oh), 255, 12)
 
-    # Замыкаем внутренние Т-образные стыки перегородок, чтобы избежать объединения разных комнат
-    # Находим внутренние вертикальные и горизонтальные стены и продлеваем до стыков
-    v_cnts, _ = cv2.findContours(v_walls, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 1. Замыкаем коллинеарные дверные проёмы (до 180px)
+    h_closed = cv2.morphologyEx(h_walls, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (180, 1)))
+    v_closed = cv2.morphologyEx(v_walls, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 180)))
+    grid = cv2.bitwise_or(grid, cv2.bitwise_or(h_closed, v_closed))
+
+    # 2. Автоматический Raycasting (продление открытых концов перегородок до пересечения)
+    v_cnts, _ = cv2.findContours(v_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for vc in v_cnts:
         vx, vy, vw, vh = cv2.boundingRect(vc)
-        if vh >= 35 and ox + 25 < vx < ox + ow - 25:
-            cv2.line(grid, (vx + vw // 2, oy), (vx + vw // 2, oy + oh), 255, 10)
+        # Верхний открытый конец
+        if vy > oy + 20 and grid[vy - 15, vx + vw // 2] == 0:
+            for y_scan in range(vy - 1, oy, -1):
+                if grid[y_scan, vx + vw // 2] > 0 or y_scan == oy + 1:
+                    cv2.line(grid, (vx + vw // 2, vy), (vx + vw // 2, y_scan), 255, 10)
+                    break
+        # Нижний открытый конец
+        if vy + vh < oy + oh - 20 and grid[min(grid.shape[0] - 1, vy + vh + 15), vx + vw // 2] == 0:
+            for y_scan in range(vy + vh + 1, oy + oh + 1):
+                if grid[min(grid.shape[0] - 1, y_scan), vx + vw // 2] > 0 or y_scan == oy + oh:
+                    cv2.line(grid, (vx + vw // 2, vy + vh), (vx + vw // 2, y_scan), 255, 10)
+                    break
 
-    h_cnts, _ = cv2.findContours(h_walls, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    h_cnts, _ = cv2.findContours(h_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for hc in h_cnts:
         hx, hy, hw, hh = cv2.boundingRect(hc)
-        if hw >= 35 and oy + 25 < hy < oy + oh - 25:
-            cv2.line(grid, (ox, hy + hh // 2), (ox + ow, hy + hh // 2), 255, 10)
+        # Левый открытый конец
+        if hx > ox + 20 and grid[hy + hh // 2, hx - 15] == 0:
+            for x_scan in range(hx - 1, ox, -1):
+                if grid[hy + hh // 2, x_scan] > 0 or x_scan == ox + 1:
+                    cv2.line(grid, (hx, hy + hh // 2), (x_scan, hy + hh // 2), 255, 10)
+                    break
+        # Правый открытый конец
+        if hx + hw < ox + ow - 20 and grid[hy + hh // 2, min(grid.shape[1] - 1, hx + hw + 15)] == 0:
+            for x_scan in range(hx + hw + 1, ox + ow + 1):
+                if grid[hy + hh // 2, min(grid.shape[1] - 1, x_scan)] > 0 or x_scan == ox + ow:
+                    cv2.line(grid, (hx + hw, hy + hh // 2), (x_scan, hy + hh // 2), 255, 10)
+                    break
 
     # 4. Маскируем внутреннее пространство квартиры (строго внутри несущих стен)
     inside_mask = np.zeros_like(wall_mask)
@@ -250,7 +271,6 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         rx = stats[l, cv2.CC_STAT_LEFT]
         ry = stats[l, cv2.CC_STAT_TOP]
 
-        # Не допускаем объединения всей квартиры в одну комнату (rw > 0.85 * ow and rh > 0.85 * oh)
         is_whole_building = rw > (0.85 * ow) and rh > (0.85 * oh)
 
         if (
@@ -281,6 +301,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             image_height=height,
             pixels_per_meter=pixels_per_meter,
         )
+
 
 
     raw_boxes: list[list[int]] = []
