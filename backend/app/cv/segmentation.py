@@ -154,28 +154,87 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             room_polygons=[], image_width=width, image_height=height, pixels_per_meter=pixels_per_meter
         )
 
-    x, y, w, h = cv2.boundingRect(wall_pixel_coords)
-    if w * h < (width * height) * 0.01:
+    ox, oy, ow, oh = cv2.boundingRect(wall_pixel_coords)
+    if ow * oh < (width * height) * 0.01:
         return SegmentationResult(
             room_polygons=[], image_width=width, image_height=height, pixels_per_meter=pixels_per_meter
         )
 
-    # Прямоугольник комнаты по крайним пикселям стен — устойчив к разрывам
-    # (дверям/окнам), т.к. они не сдвигают минимальные/максимальные координаты
-    # (см. докстринг модуля, пункт 1).
-    corners_px = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
-    points_m: list[Point2D] = [(px / pixels_per_meter, py / pixels_per_meter) for px, py in corners_px]
+    # 1. Закрываем дверные проёмы (до 50-80px), чтобы изолировать контуры отдельных комнат
+    close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (45, 45))
+    closed_walls = cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE, close_k)
 
-    walls: list[WallSegment] = []
-    for start_m, end_m in _polygon_to_wall_segments(points_m):
-        openings = _detect_openings(image, start_m, end_m, pixels_per_meter)
-        walls.append(WallSegment(start=start_m, end=end_m, openings=openings))
+    # 2. Маскируем внутреннее пространство квартиры
+    inside_mask = np.zeros_like(wall_mask)
+    inside_mask[oy : oy + oh, ox : ox + ow] = 255
+    rooms_space = cv2.bitwise_and(cv2.bitwise_not(closed_walls), inside_mask)
 
-    room_polygons = [RoomPolygon(points=points_m, walls=walls)]
+    # 3. Находим связные компоненты внутренних комнат
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(rooms_space, connectivity=4)
+
+    min_area_px = int(pixels_per_meter * pixels_per_meter * 2.5)  # 2.5 кв.м
+    max_area_px = int(pixels_per_meter * pixels_per_meter * 150.0) # 150 кв.м
+
+    valid_labels = [
+        l
+        for l in range(1, num_labels)
+        if stats[l, cv2.CC_STAT_AREA] >= min_area_px
+        and stats[l, cv2.CC_STAT_WIDTH] >= 35
+        and stats[l, cv2.CC_STAT_HEIGHT] >= 35
+    ]
+
+    # Если комната одна (студия или тест без внутренних перегородок), привязываем к внешним границам
+    if len(valid_labels) <= 1:
+        corners_px = [(ox, oy), (ox + ow, oy), (ox + ow, oy + oh), (ox, oy + oh)]
+        pts_m = [(round(px / pixels_per_meter, 2), round(py / pixels_per_meter, 2)) for px, py in corners_px]
+        walls = []
+        for start_m, end_m in _polygon_to_wall_segments(pts_m):
+            openings = _detect_openings(image, start_m, end_m, pixels_per_meter)
+            walls.append(WallSegment(start=start_m, end=end_m, openings=openings))
+        return SegmentationResult(
+            room_polygons=[RoomPolygon(points=pts_m, walls=walls)],
+            image_width=width,
+            image_height=height,
+            pixels_per_meter=pixels_per_meter,
+        )
+
+    detected_polygons: list[RoomPolygon] = []
+
+    for label in valid_labels:
+        bx = stats[label, cv2.CC_STAT_LEFT]
+        by = stats[label, cv2.CC_STAT_TOP]
+        bw_room = stats[label, cv2.CC_STAT_WIDTH]
+        bh_room = stats[label, cv2.CC_STAT_HEIGHT]
+
+        # Привязка (snap) к внешним границам несущих стен
+        if abs(bx - ox) < 25:
+            bx = ox
+        if abs(by - oy) < 25:
+            by = oy
+        if abs((bx + bw_room) - (ox + ow)) < 25:
+            bw_room = (ox + ow) - bx
+        if abs((by + bh_room) - (oy + oh)) < 25:
+            bh_room = (oy + oh) - by
+
+        pts_m = [
+            (round(bx / pixels_per_meter, 2), round(by / pixels_per_meter, 2)),
+            (round((bx + bw_room) / pixels_per_meter, 2), round(by / pixels_per_meter, 2)),
+            (round((bx + bw_room) / pixels_per_meter, 2), round((by + bh_room) / pixels_per_meter, 2)),
+            (round(bx / pixels_per_meter, 2), round((by + bh_room) / pixels_per_meter, 2)),
+        ]
+
+        walls = []
+        for start_m, end_m in _polygon_to_wall_segments(pts_m):
+            openings = _detect_openings(image, start_m, end_m, pixels_per_meter)
+            walls.append(WallSegment(start=start_m, end=end_m, openings=openings))
+
+        detected_polygons.append(RoomPolygon(points=pts_m, walls=walls))
 
     return SegmentationResult(
-        room_polygons=room_polygons,
+        room_polygons=detected_polygons,
         image_width=width,
         image_height=height,
         pixels_per_meter=pixels_per_meter,
     )
+
+
