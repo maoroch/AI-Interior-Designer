@@ -210,11 +210,25 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
     v_walls = cv2.morphologyEx(structural_walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 16)))
 
     # Продление линий для перекрытия проёмов
-    h_ext = cv2.dilate(h_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (150, 1)))
-    v_ext = cv2.dilate(v_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 150)))
+    h_ext = cv2.dilate(h_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (140, 1)))
+    v_ext = cv2.dilate(v_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 140)))
 
     grid = cv2.bitwise_or(h_ext, v_ext)
     cv2.rectangle(grid, (ox, oy), (ox + ow, oy + oh), 255, 12)
+
+    # Замыкаем внутренние Т-образные стыки перегородок, чтобы избежать объединения разных комнат
+    # Находим внутренние вертикальные и горизонтальные стены и продлеваем до стыков
+    v_cnts, _ = cv2.findContours(v_walls, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for vc in v_cnts:
+        vx, vy, vw, vh = cv2.boundingRect(vc)
+        if vh >= 35 and ox + 25 < vx < ox + ow - 25:
+            cv2.line(grid, (vx + vw // 2, oy), (vx + vw // 2, oy + oh), 255, 10)
+
+    h_cnts, _ = cv2.findContours(h_walls, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for hc in h_cnts:
+        hx, hy, hw, hh = cv2.boundingRect(hc)
+        if hw >= 35 and oy + 25 < hy < oy + oh - 25:
+            cv2.line(grid, (ox, hy + hh // 2), (ox + ow, hy + hh // 2), 255, 10)
 
     # 4. Маскируем внутреннее пространство квартиры (строго внутри несущих стен)
     inside_mask = np.zeros_like(wall_mask)
@@ -224,7 +238,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
     # 5. Находим связные компоненты внутренних комнат
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(rooms_space, connectivity=4)
 
-    min_area_px = int(pixels_per_meter * pixels_per_meter * 3.8)
+    min_area_px = int(pixels_per_meter * pixels_per_meter * 3.5)
     max_area_px = int(pixels_per_meter * pixels_per_meter * 180.0)
 
     valid_labels = []
@@ -236,15 +250,19 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         rx = stats[l, cv2.CC_STAT_LEFT]
         ry = stats[l, cv2.CC_STAT_TOP]
 
+        # Не допускаем объединения всей квартиры в одну комнату (rw > 0.85 * ow and rh > 0.85 * oh)
+        is_whole_building = rw > (0.85 * ow) and rh > (0.85 * oh)
+
         if (
             min_area_px <= area <= max_area_px
-            and rw >= 60
-            and rh >= 60
-            and aspect <= 3.2
+            and rw >= 50
+            and rh >= 50
+            and aspect <= 3.5
             and rx >= ox
             and ry >= oy
             and (rx + rw) <= (ox + ow + 5)
             and (ry + rh) <= (oy + oh + 5)
+            and not is_whole_building
         ):
             valid_labels.append(l)
 
@@ -263,6 +281,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             image_height=height,
             pixels_per_meter=pixels_per_meter,
         )
+
 
     raw_boxes: list[list[int]] = []
     for label in valid_labels:
