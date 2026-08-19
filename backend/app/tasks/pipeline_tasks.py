@@ -153,7 +153,7 @@ async def _generate_one_variant(
 
     scene = scene_generator_agent.assemble(
         project_id=project_id,
-        version=1,
+        version=2,
         rooms=rooms,
         furniture=furniture,
         lighting=lighting,

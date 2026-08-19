@@ -17,8 +17,10 @@ Agent 1 — Floor Plan Analyzer.
 Вход: сырые байты изображения плана.
 Выход: список Room (только polygon/walls, без type) — заготовка для Room Detector.
 """
+import asyncio
 import logging
 import uuid
+
 
 from app.core.config import get_settings
 from app.core.llm import complete_vision_json
@@ -60,23 +62,24 @@ async def analyze(image_bytes: bytes) -> list[Room]:
             )
         )
 
-    # Валидация через Groq vision (если указан API ключ)
+    # Валидация через Groq vision (если указан API ключ) — не блокирует пайплайн при таймаутах
     settings = get_settings()
     if settings.groq_api_key:
         try:
             prompt = (
-                "Проанализируй чертёж/план помещения на изображении. "
-                "Определи приблизительную общую площадь в кв.м и типы помещений. "
-                "Верни JSON: {\"estimated_area_sqm\": float, \"rooms_detected\": [{\"name\": str, \"suggested_type\": str}]}"
+                "Проанализируй чертёж помещения. Верни JSON: "
+                "{\"estimated_area_sqm\": float, \"rooms_detected\": [{\"name\": str, \"suggested_type\": str}]}"
             )
-            vision_result = await complete_vision_json(
-                system_prompt="Ты — эксперт по архитектурным чертежам и планам квартир.",
+            vision_coro = complete_vision_json(
+                system_prompt="Ты — эксперт по архитектурным чертежам. Отвечай только JSON.",
                 user_prompt=prompt,
                 image_bytes=image_bytes,
             )
+            vision_result = await asyncio.wait_for(vision_coro, timeout=8.0)
             logger.info("Vision LLM analysis: %s", vision_result)
         except Exception as e:
-            logger.warning("Vision LLM validation failed, continuing with CV segmentation: %s", e)
+            logger.info("Vision LLM skipped or timed out, using CV segmentation: %s", e)
 
     return rooms
+
 

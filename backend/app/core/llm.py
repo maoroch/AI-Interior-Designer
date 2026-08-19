@@ -107,12 +107,12 @@ async def complete_vision_json(system_prompt: str, user_prompt: str, image_bytes
     import io
     from PIL import Image
 
-    # Сжимаем изображение до макс 512px, чтобы не упираться в TPM (Tokens Per Minute) лимиты Groq
+    # Сжимаем изображение до макс 512px, чтобы не упираться в TPM лимиты Groq
     try:
         pil_img = Image.open(io.BytesIO(image_bytes))
         pil_img.thumbnail((512, 512))
         buf = io.BytesIO()
-        pil_img.convert("RGB").save(buf, format="JPEG", quality=85)
+        pil_img.convert("RGB").save(buf, format="JPEG", quality=80)
         optimized_bytes = buf.getvalue()
         mime_type = "image/jpeg"
     except Exception:
@@ -127,7 +127,7 @@ async def complete_vision_json(system_prompt: str, user_prompt: str, image_bytes
             messages=[
                 {
                     "role": "system",
-                    "content": system_prompt + "\nВсегда отвечай в формате строгого JSON объекта.",
+                    "content": system_prompt + "\nОтвечай строго валидным JSON объектом. Не используй теги <think>.",
                 },
                 {
                     "role": "user",
@@ -137,12 +137,14 @@ async def complete_vision_json(system_prompt: str, user_prompt: str, image_bytes
                     ],
                 },
             ],
-            temperature=0.2,
+            temperature=0.1,
+            max_tokens=1024,
         )
         content = response.choices[0].message.content or ""
         return _parse_json_safely(content)
 
     return await _with_retries(_call, description="complete_vision_json")
+
 
 
 
