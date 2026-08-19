@@ -93,8 +93,29 @@ def _sample_is_wall(image: np.ndarray, x_px: float, y_px: float) -> bool:
     return float(patch.mean()) < WALL_INTENSITY_THRESHOLD
 
 
+def _is_exterior_wall_segment(
+    start_m: Point2D,
+    end_m: Point2D,
+    ox_m: float,
+    oy_m: float,
+    ow_m: float,
+    oh_m: float,
+    tol: float = 0.6,
+) -> bool:
+    """Определяет, является ли стена фасадной (внешней) или межкомнатной перегородкой."""
+    along_top = abs(start_m[1] - oy_m) < tol and abs(end_m[1] - oy_m) < tol
+    along_bottom = abs(start_m[1] - (oy_m + oh_m)) < tol and abs(end_m[1] - (oy_m + oh_m)) < tol
+    along_left = abs(start_m[0] - ox_m) < tol and abs(end_m[0] - ox_m) < tol
+    along_right = abs(start_m[0] - (ox_m + ow_m)) < tol and abs(end_m[0] - (ox_m + ow_m)) < tol
+    return along_top or along_bottom or along_left or along_right
+
+
 def _detect_openings(
-    image: np.ndarray, start_m: Point2D, end_m: Point2D, pixels_per_meter: float
+    image: np.ndarray,
+    start_m: Point2D,
+    end_m: Point2D,
+    pixels_per_meter: float,
+    is_exterior: bool = False,
 ) -> list[DetectedOpening]:
     start_px = (start_m[0] * pixels_per_meter, start_m[1] * pixels_per_meter)
     end_px = (end_m[0] * pixels_per_meter, end_m[1] * pixels_per_meter)
@@ -113,7 +134,7 @@ def _detect_openings(
     # Группируем подряд идущие "не стена" (gap) участки в кандидаты на проём.
     openings: list[DetectedOpening] = []
     gap_start_idx: int | None = None
-    for i, is_wall in enumerate(is_wall_samples + [True]):  # sentinel, чтобы закрыть последний gap
+    for i, is_wall in enumerate(is_wall_samples + [True]):
         if not is_wall and gap_start_idx is None:
             gap_start_idx = i
         elif is_wall and gap_start_idx is not None:
@@ -125,9 +146,12 @@ def _detect_openings(
             if MIN_OPENING_WIDTH_M <= width_m <= MAX_OPENING_WIDTH_M and (
                 frac_end - frac_start
             ) <= MAX_OPENING_FRACTION_OF_WALL:
+                # Внутренние стены между комнатами — ВСЕГДА двери (проходы).
+                # Внешние фасадные стены — ОКНА.
+                opening_type = "window" if is_exterior else "door"
                 openings.append(
                     DetectedOpening(
-                        type="door" if width_m <= DOOR_MAX_WIDTH_M else "window",
+                        type=opening_type,
                         position=round((frac_start + frac_end) / 2, 3),
                         width_m=round(width_m, 2),
                     )
@@ -160,6 +184,11 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         return SegmentationResult(
             room_polygons=[], image_width=width, image_height=height, pixels_per_meter=pixels_per_meter
         )
+
+    ox_m = ox / pixels_per_meter
+    oy_m = oy / pixels_per_meter
+    ow_m = ow / pixels_per_meter
+    oh_m = oh / pixels_per_meter
 
     # 2. Выделяем прямые горизонтальные и вертикальные линии стен
     walls_clean = cv2.morphologyEx(wall_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4)))
@@ -199,7 +228,8 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         pts_m = [(round(px / pixels_per_meter, 2), round(py / pixels_per_meter, 2)) for px, py in corners_px]
         walls = []
         for start_m, end_m in _polygon_to_wall_segments(pts_m):
-            openings = _detect_openings(image, start_m, end_m, pixels_per_meter)
+            is_ext = _is_exterior_wall_segment(start_m, end_m, ox_m, oy_m, ow_m, oh_m)
+            openings = _detect_openings(image, start_m, end_m, pixels_per_meter, is_exterior=is_ext)
             walls.append(WallSegment(start=start_m, end=end_m, openings=openings))
         return SegmentationResult(
             room_polygons=[RoomPolygon(points=pts_m, walls=walls)],
@@ -235,7 +265,8 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
 
         walls = []
         for start_m, end_m in _polygon_to_wall_segments(pts_m):
-            openings = _detect_openings(image, start_m, end_m, pixels_per_meter)
+            is_ext = _is_exterior_wall_segment(start_m, end_m, ox_m, oy_m, ow_m, oh_m)
+            openings = _detect_openings(image, start_m, end_m, pixels_per_meter, is_exterior=is_ext)
             walls.append(WallSegment(start=start_m, end=end_m, openings=openings))
 
         detected_polygons.append(RoomPolygon(points=pts_m, walls=walls))
@@ -246,6 +277,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         image_height=height,
         pixels_per_meter=pixels_per_meter,
     )
+
 
 
 

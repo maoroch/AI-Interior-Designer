@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # --- Groq API (LLM-агенты) ---
     groq_api_key: str = ""
-    groq_text_model: str = "openai/gpt-oss-120b"
+    groq_text_model: str = "openai/gpt-oss-20b"
     groq_vision_model: str = "qwen/qwen3.6-27b"  # актуальная vision-модель Groq (проверено на console.groq.com/docs/vision); поддерживает JSON mode, до 5 изображений/запрос, лимит 20MB на изображение
 
     # --- CORS ---

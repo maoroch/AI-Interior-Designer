@@ -164,29 +164,82 @@ function RoomWalls({ room }: { room: Room }) {
                 </group>
               );
             })}
-            {/* Окна с прозрачным стеклом и рамой */}
+            {/* Верхняя перемычка над всеми проёмами (двери и окна) */}
+            {sorted.map((o, i) => {
+              const center = o.position * length;
+              const topLintelH = Math.max(0.2, room.height - 2.1);
+              const topLintelCenterY = room.height - topLintelH / 2;
+              return (
+                <mesh key={`lintel_${i}`} position={[center, topLintelCenterY, 0]} castShadow receiveShadow>
+                  <boxGeometry args={[o.width, topLintelH, wall.thickness]} />
+                  <meshStandardMaterial color={wallColor} roughness={0.85} />
+                </mesh>
+              );
+            })}
+
+            {/* Окна: подоконный простенок, стекло и подоконник */}
             {sorted
               .filter((o) => o.type === "window")
               .map((o, i) => {
                 const center = o.position * length;
+                const sillH = 0.85;
+                const windowH = 1.25;
                 return (
                   <group key={`win_${i}`}>
+                    {/* Стена под подоконником */}
+                    <mesh position={[center, sillH / 2, 0]} castShadow receiveShadow>
+                      <boxGeometry args={[o.width, sillH, wall.thickness]} />
+                      <meshStandardMaterial color={wallColor} roughness={0.85} />
+                    </mesh>
+                    {/* Плинтус под окном */}
+                    <mesh position={[center, 0.05, 0]}>
+                      <boxGeometry args={[o.width, 0.1, wall.thickness + 0.02]} />
+                      <meshStandardMaterial color={plinthColor} roughness={0.5} />
+                    </mesh>
                     {/* Стекло */}
-                    <mesh position={[center, room.height * 0.55, 0]}>
-                      <boxGeometry args={[o.width - 0.08, room.height * 0.5 - 0.08, wall.thickness * 0.2]} />
+                    <mesh position={[center, sillH + windowH / 2, 0]}>
+                      <boxGeometry args={[o.width - 0.06, windowH - 0.06, wall.thickness * 0.2]} />
                       <meshPhysicalMaterial
                         color="#a8d5e5"
                         transparent
-                        opacity={0.3}
-                        roughness={0.1}
-                        transmission={0.8}
+                        opacity={0.35}
+                        roughness={0.08}
+                        transmission={0.85}
                         thickness={0.1}
                       />
                     </mesh>
-                    {/* Подоконник и рама */}
-                    <mesh position={[center, room.height * 0.3, 0]} castShadow>
-                      <boxGeometry args={[o.width + 0.05, 0.04, wall.thickness + 0.08]} />
+                    {/* Подоконник */}
+                    <mesh position={[center, sillH + 0.02, 0]} castShadow>
+                      <boxGeometry args={[o.width + 0.08, 0.04, wall.thickness + 0.08]} />
                       <meshStandardMaterial color="#ffffff" roughness={0.3} />
+                    </mesh>
+                  </group>
+                );
+              })}
+
+            {/* Двери: наличники и открытый проход в полу */}
+            {sorted
+              .filter((o) => o.type === "door")
+              .map((o, i) => {
+                const center = o.position * length;
+                const doorH = 2.1;
+                const frameThickness = 0.04;
+                return (
+                  <group key={`door_frame_${i}`}>
+                    {/* Левый косяк */}
+                    <mesh position={[center - o.width / 2 + frameThickness / 2, doorH / 2, 0]} castShadow>
+                      <boxGeometry args={[frameThickness, doorH, wall.thickness + 0.02]} />
+                      <meshStandardMaterial color="#3d332a" roughness={0.4} />
+                    </mesh>
+                    {/* Правый косяк */}
+                    <mesh position={[center + o.width / 2 - frameThickness / 2, doorH / 2, 0]} castShadow>
+                      <boxGeometry args={[frameThickness, doorH, wall.thickness + 0.02]} />
+                      <meshStandardMaterial color="#3d332a" roughness={0.4} />
+                    </mesh>
+                    {/* Верхняя перекладина рамы двери */}
+                    <mesh position={[center, doorH - frameThickness / 2, 0]} castShadow>
+                      <boxGeometry args={[o.width, frameThickness, wall.thickness + 0.02]} />
+                      <meshStandardMaterial color="#3d332a" roughness={0.4} />
                     </mesh>
                   </group>
                 );
