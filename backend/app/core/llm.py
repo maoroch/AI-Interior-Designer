@@ -23,8 +23,11 @@ logger = logging.getLogger("llm")
 
 _client: AsyncGroq | None = None
 
-RETRY_ATTEMPTS = 3
-RETRY_BASE_DELAY_SECONDS = 1.5
+import re
+
+RETRY_ATTEMPTS = 6
+RETRY_BASE_DELAY_SECONDS = 3.0
+_llm_lock = asyncio.Lock()
 
 
 class LLMCallError(Exception):
@@ -38,18 +41,45 @@ def get_client() -> AsyncGroq:
     return _client
 
 
+def _extract_retry_delay(error_msg: str, attempt: int) -> float:
+    """Извлекает точное время ожидания из ответа Groq 429 RateLimit (например: 'try again in 2.75s')."""
+    min_wait = min(2.5, RETRY_BASE_DELAY_SECONDS)
+    match = re.search(r"try again in ([0-9]+(?:\.[0-9]+)?)(?:ms|s)", error_msg, re.IGNORECASE)
+    if match:
+        val = float(match.group(1))
+        if "ms" in match.group(0).lower():
+            val = val / 1000.0
+        return max(min_wait, val + 0.8)
+    return max(min_wait, RETRY_BASE_DELAY_SECONDS * attempt)
+
+
+
 async def _with_retries(coro_factory, description: str):
     last_error: Exception | None = None
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
-            return await coro_factory()
+            async with _llm_lock:
+                result = await coro_factory()
+                # Небольшая пауза для соблюдения лимитов TPM на Free Tier
+                await asyncio.sleep(0.3)
+                return result
         except Exception as exc:  # noqa: BLE001 - любые сбои Groq/парсинга JSON
             last_error = exc
-            logger.warning("LLM call failed (%s), attempt %s/%s: %s", description, attempt, RETRY_ATTEMPTS, exc)
+            error_str = str(exc)
+            delay = _extract_retry_delay(error_str, attempt)
+            logger.warning(
+                "LLM call failed (%s), attempt %s/%s. Sleeping %.2fs. Error: %s",
+                description,
+                attempt,
+                RETRY_ATTEMPTS,
+                delay,
+                exc,
+            )
             if attempt < RETRY_ATTEMPTS:
-                await asyncio.sleep(RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)))
+                await asyncio.sleep(delay)
 
     raise LLMCallError(f"Не удалось получить ответ от LLM ({description}) после {RETRY_ATTEMPTS} попыток: {last_error}")
+
 
 
 def _parse_json_safely(content: str) -> dict:
