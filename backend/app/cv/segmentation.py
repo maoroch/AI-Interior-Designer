@@ -163,23 +163,28 @@ def _detect_openings(
 
 def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
     np_arr = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)
-    if image is None:
+    img_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if img_bgr is None:
         raise ValueError("Не удалось декодировать изображение плана")
 
+    image = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     height, width = image.shape
     pixels_per_meter = 50.0
 
     # 1. Бинаризация: тёмные пиксели стен (< 140)
     _, wall_mask = cv2.threshold(image, 140, 255, cv2.THRESH_BINARY_INV)
 
-    wall_pixel_coords = cv2.findNonZero(wall_mask)
-    if wall_pixel_coords is None:
+    # Убираем тонкие размерные надписи (например, 12.0m, 9.5m), чтобы получить истинный внешний периметр здания
+    structural_walls = cv2.morphologyEx(wall_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (6, 6)))
+    coords = cv2.findNonZero(structural_walls)
+    if coords is None:
+        coords = cv2.findNonZero(wall_mask)
+    if coords is None:
         return SegmentationResult(
             room_polygons=[], image_width=width, image_height=height, pixels_per_meter=pixels_per_meter
         )
 
-    ox, oy, ow, oh = cv2.boundingRect(wall_pixel_coords)
+    ox, oy, ow, oh = cv2.boundingRect(coords)
     if ow * oh < (width * height) * 0.01:
         return SegmentationResult(
             room_polygons=[], image_width=width, image_height=height, pixels_per_meter=pixels_per_meter
@@ -190,15 +195,23 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
     ow_m = ow / pixels_per_meter
     oh_m = oh / pixels_per_meter
 
-    # 2. Выделяем прямые горизонтальные и вертикальные линии стен
-    walls_clean = cv2.morphologyEx(wall_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4)))
+    # 2. Детекция синих/голубых оконных блоков (Color Window Detection)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    blue_mask = cv2.inRange(hsv, np.array([90, 40, 40]), np.array([135, 255, 255]))
+    blue_cnts, _ = cv2.findContours(blue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    detected_windows_boxes: list[tuple[int, int, int, int]] = []
+    for c in blue_cnts:
+        bx, by, bw, bh = cv2.boundingRect(c)
+        if bw >= 25 or bh >= 25:
+            detected_windows_boxes.append((bx, by, bw, bh))
 
-    h_walls = cv2.morphologyEx(walls_clean, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (18, 3)))
-    v_walls = cv2.morphologyEx(walls_clean, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 18)))
+    # 3. Выделяем прямые горизонтальные и вертикальные линии стен
+    h_walls = cv2.morphologyEx(structural_walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (16, 3)))
+    v_walls = cv2.morphologyEx(structural_walls, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 16)))
 
-    # 3. Направленное продление линий для перекрытия дверных проёмов (до 180px)
-    h_ext = cv2.dilate(h_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (180, 1)))
-    v_ext = cv2.dilate(v_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 180)))
+    # Продление линий для перекрытия проёмов
+    h_ext = cv2.dilate(h_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (150, 1)))
+    v_ext = cv2.dilate(v_walls, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 150)))
 
     grid = cv2.bitwise_or(h_ext, v_ext)
     cv2.rectangle(grid, (ox, oy), (ox + ow, oy + oh), 255, 12)
@@ -211,7 +224,6 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
     # 5. Находим связные компоненты внутренних комнат
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(rooms_space, connectivity=4)
 
-    # Минимальная площадь комнаты >= 3.8 кв.м, минимальная ширина/глубина >= 1.5м (75px)
     min_area_px = int(pixels_per_meter * pixels_per_meter * 3.8)
     max_area_px = int(pixels_per_meter * pixels_per_meter * 180.0)
 
@@ -224,7 +236,6 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         rx = stats[l, cv2.CC_STAT_LEFT]
         ry = stats[l, cv2.CC_STAT_TOP]
 
-        # Исключаем артефакты вне периметра, узкие полосы (aspect > 3.2) и микро-карманы
         if (
             min_area_px <= area <= max_area_px
             and rw >= 60
@@ -260,7 +271,6 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         bw_room = stats[label, cv2.CC_STAT_WIDTH]
         bh_room = stats[label, cv2.CC_STAT_HEIGHT]
 
-        # Привязка (snap) к внешним несущим стенам
         if abs(bx - ox) < 25:
             bx = ox
         if abs(by - oy) < 25:
@@ -272,7 +282,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
 
         raw_boxes.append([int(bx), int(by), int(bw_room), int(bh_room)])
 
-    # Привязка (snap) смежных межкомнатных перегородок к центру линии стены
+    # Привязка смежных межкомнатных перегородок
     for i in range(len(raw_boxes)):
         for j in range(i + 1, len(raw_boxes)):
             b1, b2 = raw_boxes[i], raw_boxes[j]
@@ -289,7 +299,6 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
                 b2[3] = (b2[1] + b2[3]) - mid_y
                 b2[1] = mid_y
 
-
     detected_polygons: list[RoomPolygon] = []
     for bx, by, bw_room, bh_room in raw_boxes:
         pts_m = [
@@ -301,8 +310,61 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
 
         walls = []
         for start_m, end_m in _polygon_to_wall_segments(pts_m):
-            is_ext = _is_exterior_wall_segment(start_m, end_m, ox_m, oy_m, ow_m, oh_m)
-            openings = _detect_openings(image, start_m, end_m, pixels_per_meter, is_exterior=is_ext)
+            s_px = (start_m[0] * pixels_per_meter, start_m[1] * pixels_per_meter)
+            e_px = (end_m[0] * pixels_per_meter, end_m[1] * pixels_per_meter)
+
+            openings: list[DetectedOpening] = []
+            # 1. Проверяем синие окна вдоль данного сегмента стены
+            for wx, wy, ww, wh in detected_windows_boxes:
+                w_mid_x = wx + ww / 2
+                w_mid_y = wy + wh / 2
+                # Горизонтальная стена
+                if (
+                    abs(s_px[1] - e_px[1]) < 10
+                    and min(s_px[0], e_px[0]) <= w_mid_x <= max(s_px[0], e_px[0])
+                    and abs(s_px[1] - w_mid_y) < 25
+                ):
+                    pos = (w_mid_x - min(s_px[0], e_px[0])) / max(1.0, abs(e_px[0] - s_px[0]))
+                    if s_px[0] > e_px[0]:
+                        pos = 1.0 - pos
+                    openings.append(
+                        DetectedOpening(
+                            type="window",
+                            position=round(pos, 3),
+                            width_m=round(max(ww, wh) / pixels_per_meter, 2),
+                        )
+                    )
+                # Вертикальная стена
+                elif (
+                    abs(s_px[0] - e_px[0]) < 10
+                    and min(s_px[1], e_px[1]) <= w_mid_y <= max(s_px[1], e_px[1])
+                    and abs(s_px[0] - w_mid_x) < 25
+                ):
+                    pos = (w_mid_y - min(s_px[1], e_px[1])) / max(1.0, abs(e_px[1] - s_px[1]))
+                    if s_px[1] > e_px[1]:
+                        pos = 1.0 - pos
+                    openings.append(
+                        DetectedOpening(
+                            type="window",
+                            position=round(pos, 3),
+                            width_m=round(max(ww, wh) / pixels_per_meter, 2),
+                        )
+                    )
+
+            # 2. Если синих окон нет — выполняем поиск дверных проёмов и разрывов
+            if not openings:
+                is_ext = _is_exterior_wall_segment(start_m, end_m, ox_m, oy_m, ow_m, oh_m)
+                detected = _detect_openings(image, start_m, end_m, pixels_per_meter, is_exterior=is_ext)
+                for d in detected:
+                    # Входная дверь на нижней стене (вход в квартиру)
+                    if (
+                        abs(start_m[1] - (oy_m + oh_m)) < 0.5
+                        and abs(end_m[1] - (oy_m + oh_m)) < 0.5
+                        and min(start_m[0], end_m[0]) < ox_m + 3.5
+                    ):
+                        d.type = "door"
+                    openings.append(d)
+
             walls.append(WallSegment(start=start_m, end=end_m, openings=openings))
 
         detected_polygons.append(RoomPolygon(points=pts_m, walls=walls))
@@ -313,6 +375,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         image_height=height,
         pixels_per_meter=pixels_per_meter,
     )
+
 
 
 
