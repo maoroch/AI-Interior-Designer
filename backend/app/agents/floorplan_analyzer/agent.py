@@ -33,6 +33,18 @@ logger = logging.getLogger("floorplan_analyzer")
 async def analyze(image_bytes: bytes) -> list[Room]:
     cv_result = segment_floor_plan(image_bytes)
 
+    if cv_result.quality_score:
+        logger.info(
+            "CV Segmentation Quality: overall=%.1f%% (overlap=%.1f%%, coverage=%.1f%%, connectivity=%.1f%%, geometry=%.1f%%, is_valid=%s, issues=%d)",
+            cv_result.quality_score.overall_score * 100,
+            cv_result.quality_score.overlap_score * 100,
+            cv_result.quality_score.coverage_score * 100,
+            cv_result.quality_score.connectivity_score * 100,
+            cv_result.quality_score.geometry_score * 100,
+            cv_result.quality_score.is_valid,
+            len(cv_result.quality_score.issues),
+        )
+
     rooms: list[Room] = []
     for room_polygon in cv_result.room_polygons:
         walls: list[Wall] = []

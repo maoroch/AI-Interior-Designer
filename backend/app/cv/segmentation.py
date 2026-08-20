@@ -70,11 +70,183 @@ class RoomPolygon:
 
 
 @dataclass
+class ValidationIssue:
+    severity: str  # "info" | "warning" | "error"
+    code: str      # "ROOM_OVERLAP" | "NO_DOOR" | "NO_WINDOW" | "EXTREME_ASPECT" | "LOW_COVERAGE" | "TINY_DIMENSION"
+    message: str
+    room_index: int | None = None
+
+
+@dataclass
+class CVQualityScore:
+    overall_score: float         # 0.0 .. 1.0 (например, 0.96)
+    overlap_score: float         # 1.0 = отсутствие недопустимых наложений комнат
+    coverage_score: float        # Доля полезной площади квартиры (0.0 .. 1.0)
+    connectivity_score: float    # Доля комнат с дверными проходами
+    geometry_score: float        # Ортогональность и регулярность стен
+    issues: list[ValidationIssue] = field(default_factory=list)
+    is_valid: bool = True
+
+
+@dataclass
 class SegmentationResult:
     room_polygons: list[RoomPolygon]
     image_width: int
     image_height: int
     pixels_per_meter: float = 50.0  # заглушка масштаба; в реале — из LLM-разметки/аннотаций
+    quality_score: CVQualityScore | None = None
+
+
+def evaluate_segmentation_quality(
+    room_polygons: list[RoomPolygon],
+    ox_m: float,
+    oy_m: float,
+    ow_m: float,
+    oh_m: float,
+) -> CVQualityScore:
+    """
+    Система валидации и скоринга точности Computer Vision:
+    1. Overlap Score (0..1) — проверка отсутствия пересечений и наложений комнат
+    2. Coverage Score (0..1) — покрытие площади внешнего контура здания
+    3. Connectivity Score (0..1) — наличие входных дверей и окон в помещениях
+    4. Geometry Score (0..1) — регулярность пропорций (aspect ratio <= 3.2, мин. габариты >= 1.3м)
+    """
+    issues: list[ValidationIssue] = []
+    n_rooms = len(room_polygons)
+    if n_rooms == 0:
+        return CVQualityScore(
+            overall_score=0.0,
+            overlap_score=0.0,
+            coverage_score=0.0,
+            connectivity_score=0.0,
+            geometry_score=0.0,
+            is_valid=False,
+            issues=[
+                ValidationIssue(
+                    severity="error",
+                    code="NO_ROOMS",
+                    message="Не обнаружено ни одной валидной комнаты",
+                )
+            ],
+        )
+
+    # 1. Overlap Score
+    total_overlap_penalty = 0.0
+    for i in range(n_rooms):
+        pts1 = room_polygons[i].points
+        xs1, ys1 = [p[0] for p in pts1], [p[1] for p in pts1]
+        min_x1, max_x1, min_y1, max_y1 = min(xs1), max(xs1), min(ys1), max(ys1)
+        area1 = (max_x1 - min_x1) * (max_y1 - min_y1)
+
+        for j in range(i + 1, n_rooms):
+            pts2 = room_polygons[j].points
+            xs2, ys2 = [p[0] for p in pts2], [p[1] for p in pts2]
+            min_x2, max_x2, min_y2, max_y2 = min(xs2), max(xs2), min(ys2), max(ys2)
+            area2 = (max_x2 - min_x2) * (max_y2 - min_y2)
+
+            x_ov = max(0.0, min(max_x1, max_x2) - max(min_x1, min_x2))
+            y_ov = max(0.0, min(max_y1, max_y2) - max(min_y1, min_y2))
+            ov_area = x_ov * y_ov
+            ov_frac = ov_area / max(0.01, min(area1, area2))
+
+            if ov_frac > 0.08:
+                total_overlap_penalty += ov_frac
+                issues.append(
+                    ValidationIssue(
+                        severity="error",
+                        code="ROOM_OVERLAP",
+                        message=f"Пересечение комнат #{i+1} и #{j+1}: {ov_area:.2f} м² ({ov_frac*100:.1f}%)",
+                        room_index=i,
+                    )
+                )
+
+    overlap_score = max(0.0, 1.0 - total_overlap_penalty)
+
+    # 2. Coverage Score
+    total_room_area = sum(
+        (max([p[0] for p in r.points]) - min([p[0] for p in r.points]))
+        * (max([p[1] for p in r.points]) - min([p[1] for p in r.points]))
+        for r in room_polygons
+    )
+    envelope_area = ow_m * oh_m
+    cov_ratio = total_room_area / max(1.0, envelope_area)
+    if cov_ratio < 0.60:
+        issues.append(
+            ValidationIssue(
+                severity="warning",
+                code="LOW_COVERAGE",
+                message=f"Низкий процент покрытия периметра квартиры: {cov_ratio*100:.1f}%",
+            )
+        )
+        coverage_score = max(0.0, cov_ratio / 0.80)
+    else:
+        coverage_score = min(1.0, cov_ratio / 0.85)
+
+    # 3. Connectivity Score
+    connected_count = 0
+    for idx, r in enumerate(room_polygons):
+        has_door = any(any(o.type == "door" for o in w.openings) for w in r.walls)
+        has_window = any(any(o.type == "window" for o in w.openings) for w in r.walls)
+        if has_door or (n_rooms == 1 and (has_door or has_window)):
+            connected_count += 1
+        else:
+            issues.append(
+                ValidationIssue(
+                    severity="warning",
+                    code="NO_DOOR",
+                    message=f"В комнате #{idx+1} отсутствует входная дверь",
+                    room_index=idx,
+                )
+            )
+    connectivity_score = connected_count / max(1, n_rooms)
+
+    # 4. Geometry Score
+    geom_penalty = 0.0
+    for idx, r in enumerate(room_polygons):
+        xs, ys = [p[0] for p in r.points], [p[1] for p in r.points]
+        w, h = max(xs) - min(xs), max(ys) - min(ys)
+        aspect = max(w / max(0.1, h), h / max(0.1, w))
+        if aspect > 3.2:
+            geom_penalty += 0.15
+            issues.append(
+                ValidationIssue(
+                    severity="warning",
+                    code="EXTREME_ASPECT",
+                    message=f"Комната #{idx+1} имеет вытянутые пропорции (aspect ratio {aspect:.1f})",
+                    room_index=idx,
+                )
+            )
+        if w < 1.3 or h < 1.3:
+            geom_penalty += 0.1
+            issues.append(
+                ValidationIssue(
+                    severity="warning",
+                    code="TINY_DIMENSION",
+                    message=f"Комната #{idx+1} слишком узкая ({w:.2f}м x {h:.2f}м)",
+                    room_index=idx,
+                )
+            )
+    geometry_score = max(0.0, 1.0 - geom_penalty)
+
+    # Итоговый композитный скор
+    overall = (
+        (0.35 * overlap_score)
+        + (0.25 * connectivity_score)
+        + (0.25 * coverage_score)
+        + (0.15 * geometry_score)
+    )
+    is_valid = overall >= 0.70 and not any(iss.severity == "error" for iss in issues)
+
+    return CVQualityScore(
+        overall_score=round(overall, 3),
+        overlap_score=round(overlap_score, 3),
+        coverage_score=round(coverage_score, 3),
+        connectivity_score=round(connectivity_score, 3),
+        geometry_score=round(geometry_score, 3),
+        is_valid=is_valid,
+        issues=issues,
+    )
+
 
 
 def _polygon_to_wall_segments(points: list[Point2D]) -> list[tuple[Point2D, Point2D]]:
@@ -181,13 +353,21 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
         coords = cv2.findNonZero(wall_mask)
     if coords is None:
         return SegmentationResult(
-            room_polygons=[], image_width=width, image_height=height, pixels_per_meter=pixels_per_meter
+            room_polygons=[],
+            image_width=width,
+            image_height=height,
+            pixels_per_meter=pixels_per_meter,
+            quality_score=evaluate_segmentation_quality([], 0, 0, 0, 0),
         )
 
     ox, oy, ow, oh = cv2.boundingRect(coords)
     if ow * oh < (width * height) * 0.01:
         return SegmentationResult(
-            room_polygons=[], image_width=width, image_height=height, pixels_per_meter=pixels_per_meter
+            room_polygons=[],
+            image_width=width,
+            image_height=height,
+            pixels_per_meter=pixels_per_meter,
+            quality_score=evaluate_segmentation_quality([], 0, 0, 0, 0),
         )
 
     ox_m = ox / pixels_per_meter
@@ -295,11 +475,16 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             is_ext = _is_exterior_wall_segment(start_m, end_m, ox_m, oy_m, ow_m, oh_m)
             openings = _detect_openings(image, start_m, end_m, pixels_per_meter, is_exterior=is_ext)
             walls.append(WallSegment(start=start_m, end=end_m, openings=openings))
+        single_room_polygons = [RoomPolygon(points=pts_m, walls=walls)]
+        quality_score = evaluate_segmentation_quality(
+            single_room_polygons, ox_m=ox_m, oy_m=oy_m, ow_m=ow_m, oh_m=oh_m
+        )
         return SegmentationResult(
-            room_polygons=[RoomPolygon(points=pts_m, walls=walls)],
+            room_polygons=single_room_polygons,
             image_width=width,
             image_height=height,
             pixels_per_meter=pixels_per_meter,
+            quality_score=quality_score,
         )
 
 
@@ -409,12 +594,18 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
 
         detected_polygons.append(RoomPolygon(points=pts_m, walls=walls))
 
+    quality_score = evaluate_segmentation_quality(
+        detected_polygons, ox_m=ox_m, oy_m=oy_m, ow_m=ow_m, oh_m=oh_m
+    )
+
     return SegmentationResult(
         room_polygons=detected_polygons,
         image_width=width,
         image_height=height,
         pixels_per_meter=pixels_per_meter,
+        quality_score=quality_score,
     )
+
 
 
 

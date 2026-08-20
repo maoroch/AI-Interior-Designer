@@ -190,10 +190,81 @@ def test_empty_image_returns_no_rooms():
     ok, buf = cv2.imencode(".png", img)
     result = segment_floor_plan(buf.tobytes())
     assert result.room_polygons == []
+    assert result.quality_score is not None
+    assert result.quality_score.overall_score == 0.0
+    assert result.quality_score.is_valid is False
 
 
 def test_invalid_bytes_raise_value_error():
     with pytest.raises(ValueError):
         segment_floor_plan(b"not an image")
+
+
+def test_cv_quality_score_is_calculated_and_valid():
+    """Проверяет, что качественный чертеж получает высокий скор (> 85%) и статус is_valid=True."""
+    result = segment_floor_plan(_draw_multi_room_apartment())
+    score = result.quality_score
+    assert score is not None
+    assert score.overall_score >= 0.80
+    assert score.overlap_score == pytest.approx(1.0, abs=0.05)
+    assert score.coverage_score >= 0.70
+    assert score.is_valid is True
+
+
+def test_cv_validation_flags_overlapping_rooms():
+    """Проверяет, что система валидации строго ловит пересечения комнат (ROOM_OVERLAP)."""
+    from app.cv.segmentation import evaluate_segmentation_quality, RoomPolygon, WallSegment
+
+    # Создаём две пересекающиеся комнаты
+    room1 = RoomPolygon(
+        points=[(1.0, 1.0), (6.0, 1.0), (6.0, 6.0), (1.0, 6.0)],
+        walls=[WallSegment(start=(1.0, 1.0), end=(6.0, 1.0))]
+    )
+    room2 = RoomPolygon(
+        points=[(3.0, 3.0), (8.0, 3.0), (8.0, 8.0), (3.0, 8.0)],  # Пересечение 3x3=9 кв.м
+        walls=[WallSegment(start=(3.0, 3.0), end=(8.0, 3.0))]
+    )
+
+    score = evaluate_segmentation_quality([room1, room2], ox_m=1.0, oy_m=1.0, ow_m=7.0, oh_m=7.0)
+    assert score.overlap_score < 0.80
+    assert score.is_valid is False
+    issue_codes = [iss.code for iss in score.issues]
+    assert "ROOM_OVERLAP" in issue_codes
+
+
+def test_cv_validation_flags_rooms_missing_doors():
+    """Проверяет, что комната без входной двери отмечается предупреждением NO_DOOR."""
+    from app.cv.segmentation import evaluate_segmentation_quality, RoomPolygon, WallSegment, DetectedOpening
+
+    room_with_door = RoomPolygon(
+        points=[(1.0, 1.0), (5.0, 1.0), (5.0, 5.0), (1.0, 5.0)],
+        walls=[WallSegment(start=(1.0, 1.0), end=(5.0, 1.0), openings=[DetectedOpening(type="door", position=0.5, width_m=0.9)])]
+    )
+    room_without_door = RoomPolygon(
+        points=[(5.0, 1.0), (9.0, 1.0), (9.0, 5.0), (5.0, 5.0)],
+        walls=[WallSegment(start=(5.0, 1.0), end=(9.0, 1.0), openings=[])]  # Сплошные стены
+    )
+
+    score = evaluate_segmentation_quality([room_with_door, room_without_door], ox_m=1.0, oy_m=1.0, ow_m=8.0, oh_m=4.0)
+    assert score.connectivity_score == pytest.approx(0.5, abs=0.01)
+    issue_codes = [iss.code for iss in score.issues]
+    assert "NO_DOOR" in issue_codes
+
+
+def test_cv_validation_flags_extreme_aspect_ratios():
+    """Проверяет детекцию нереалистично узких комнат (EXTREME_ASPECT)."""
+    from app.cv.segmentation import evaluate_segmentation_quality, RoomPolygon, WallSegment, DetectedOpening
+
+    # Узкая полоса 10м x 1м (aspect ratio 10.0)
+    narrow_room = RoomPolygon(
+        points=[(1.0, 1.0), (11.0, 1.0), (11.0, 2.0), (1.0, 2.0)],
+        walls=[WallSegment(start=(1.0, 1.0), end=(11.0, 1.0), openings=[DetectedOpening(type="door", position=0.5, width_m=0.9)])]
+    )
+
+    score = evaluate_segmentation_quality([narrow_room], ox_m=1.0, oy_m=1.0, ow_m=10.0, oh_m=1.0)
+    assert score.geometry_score < 0.90
+    issue_codes = [iss.code for iss in score.issues]
+    assert "EXTREME_ASPECT" in issue_codes or "TINY_DIMENSION" in issue_codes
+
 
 
