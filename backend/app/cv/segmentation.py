@@ -507,6 +507,26 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
 
         raw_boxes.append([int(bx), int(by), int(bw_room), int(bh_room)])
 
+    # 6. Non-Maximum Suppression (NMS) для удаления поглощающих/пересекающихся боксов
+    raw_boxes.sort(key=lambda b: b[2] * b[3])
+    clean_boxes: list[list[int]] = []
+    for b in raw_boxes:
+        bx, by, bw, bh = b
+        area = bw * bh
+        is_subsumed = False
+        for kept in clean_boxes:
+            kx, ky, kw, kh = kept
+            k_area = kw * kh
+            x_ov = max(0, min(bx + bw, kx + kw) - max(bx, kx))
+            y_ov = max(0, min(by + bh, ky + kh) - max(by, ky))
+            ov_area = x_ov * y_ov
+            if ov_area / max(1.0, float(min(area, k_area))) > 0.55:
+                is_subsumed = True
+                break
+        if not is_subsumed:
+            clean_boxes.append(b)
+    raw_boxes = clean_boxes
+
     # Привязка смежных межкомнатных перегородок
     for i in range(len(raw_boxes)):
         for j in range(i + 1, len(raw_boxes)):
