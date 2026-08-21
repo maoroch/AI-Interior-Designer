@@ -45,23 +45,33 @@ async def analyze(image_bytes: bytes) -> list[Room]:
             len(cv_result.quality_score.issues),
         )
 
+    # Построение единого векторного графа стен (устранение дубликатов и фантомных перегородок)
+    from app.cv.wall_graph import build_wall_graph_from_segmentation
+    wall_graph = build_wall_graph_from_segmentation(
+        room_polygons=cv_result.room_polygons,
+        pixels_per_meter=cv_result.pixels_per_meter,
+        image_width=cv_result.image_width,
+        image_height=cv_result.image_height,
+    )
+
     rooms: list[Room] = []
-    for room_polygon in cv_result.room_polygons:
+    for face in wall_graph.rooms:
         walls: list[Wall] = []
-        for wall_seg in room_polygon.walls:
+        for edge in face.walls:
             openings = [
                 Opening(
                     type=OpeningType.door if o.type == "door" else OpeningType.window,
                     position=o.position,
                     width=o.width_m,
                 )
-                for o in wall_seg.openings
+                for o in edge.openings
             ]
             walls.append(
                 Wall(
-                    id=f"wall_{uuid.uuid4().hex[:8]}",
-                    start=wall_seg.start,
-                    end=wall_seg.end,
+                    id=edge.id,
+                    start=edge.start,
+                    end=edge.end,
+                    thickness=edge.thickness,
                     openings=openings,
                 )
             )
@@ -69,7 +79,7 @@ async def analyze(image_bytes: bytes) -> list[Room]:
         rooms.append(
             Room(
                 id=f"room_{uuid.uuid4().hex[:8]}",
-                polygon=room_polygon.points,
+                polygon=face.polygon,
                 walls=walls,
             )
         )
