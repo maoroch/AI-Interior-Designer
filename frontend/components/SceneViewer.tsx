@@ -46,8 +46,8 @@ function polygonCenter(polygon: [number, number][]): [number, number] {
 }
 
 /** Создаёт процедурную текстуру деревянного паркета */
-function createWoodTexture(): THREE.CanvasTexture {
-  if (typeof document === "undefined") return new THREE.CanvasTexture(document.createElement("canvas"));
+function createWoodTexture(): THREE.CanvasTexture | null {
+  if (typeof window === "undefined") return null;
   const canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 512;
@@ -77,18 +77,24 @@ function createWoodTexture(): THREE.CanvasTexture {
 }
 
 function RoomFloor({ room }: { room: Room }) {
-  const xs = room.polygon.map((p) => p[0]);
-  const ys = room.polygon.map((p) => p[1]);
-  const width = Math.max(...xs) - Math.min(...xs);
-  const depth = Math.max(...ys) - Math.min(...ys);
-  const [cx, cy] = polygonCenter(room.polygon);
-
   const isWood = room.floor_material?.includes("wood") || !room.floor_material;
   const woodTexture = useMemo(() => (isWood ? createWoodTexture() : null), [isWood]);
 
+  const shapeGeometry = useMemo(() => {
+    if (!room.polygon || room.polygon.length < 3) return null;
+    const shape = new THREE.Shape();
+    shape.moveTo(room.polygon[0][0], room.polygon[0][1]);
+    for (let i = 1; i < room.polygon.length; i++) {
+      shape.lineTo(room.polygon[i][0], room.polygon[i][1]);
+    }
+    shape.closePath();
+    return new THREE.ShapeGeometry(shape);
+  }, [room.polygon]);
+
+  if (!shapeGeometry) return null;
+
   return (
-    <mesh position={[cx, 0, cy]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-      <planeGeometry args={[width, depth]} />
+    <mesh geometry={shapeGeometry} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
       <meshStandardMaterial
         color={colorFor(room.floor_material, "#c8baa6")}
         map={woodTexture ?? undefined}
@@ -105,17 +111,18 @@ function RoomWalls({ room }: { room: Room }) {
 
   return (
     <>
-      {room.walls.map((wall) => {
+      {room.walls.map((wall, wIdx) => {
         const [x1, y1] = wall.start;
         const [x2, y2] = wall.end;
         const length = Math.hypot(x2 - x1, y2 - y1);
         const angle = Math.atan2(y2 - y1, x2 - x1);
+        const wallKey = `${room.id}_${wall.id}_${wIdx}`;
 
         if (wall.openings.length === 0) {
           const midX = (x1 + x2) / 2;
           const midY = (y1 + y2) / 2;
           return (
-            <group key={wall.id}>
+            <group key={wallKey}>
               {/* Основная стена */}
               <mesh position={[midX, room.height / 2, midY]} rotation={[0, -angle, 0]} castShadow receiveShadow>
                 <boxGeometry args={[length, room.height, wall.thickness]} />
@@ -145,7 +152,7 @@ function RoomWalls({ room }: { room: Room }) {
         if (cursor < length) segments.push({ from: cursor, to: length });
 
         return (
-          <group key={wall.id} position={[x1, 0, y1]} rotation={[0, -angle, 0]}>
+          <group key={wallKey} position={[x1, 0, y1]} rotation={[0, -angle, 0]}>
             {segments.map((seg, i) => {
               const segLength = seg.to - seg.from;
               if (segLength <= 0.02) return null;
