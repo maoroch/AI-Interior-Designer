@@ -83,9 +83,9 @@ function RoomFloor({ room }: { room: Room }) {
   const shapeGeometry = useMemo(() => {
     if (!room.polygon || room.polygon.length < 3) return null;
     const shape = new THREE.Shape();
-    shape.moveTo(room.polygon[0][0], room.polygon[0][1]);
+    shape.moveTo(room.polygon[0][0], -room.polygon[0][1]);
     for (let i = 1; i < room.polygon.length; i++) {
-      shape.lineTo(room.polygon[i][0], room.polygon[i][1]);
+      shape.lineTo(room.polygon[i][0], -room.polygon[i][1]);
     }
     shape.closePath();
     return new THREE.ShapeGeometry(shape);
