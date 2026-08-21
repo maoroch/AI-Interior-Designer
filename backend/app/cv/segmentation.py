@@ -54,6 +54,8 @@ class DetectedOpening:
     type: str  # "door" | "window"
     position: float  # 0..1 вдоль стены
     width_m: float
+    confidence: float = 0.90  # 0.0 .. 1.0 вероятность корректности
+    features: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -320,11 +322,34 @@ def _detect_openings(
                 frac_end - frac_start
             ) <= MAX_OPENING_FRACTION_OF_WALL:
                 opening_type = "window" if is_exterior else "door"
+                confidence = 0.70
+                features = ["wall_gap"]
+
+                # 1. Фактор стандартной строительной ширины
+                if opening_type == "door":
+                    if 0.70 <= width_m <= 1.15:
+                        confidence += 0.22
+                        features.append("standard_door_width")
+                    elif 1.15 < width_m <= 1.80:
+                        confidence += 0.15
+                        features.append("double_door_width")
+                else:
+                    if 0.90 <= width_m <= 3.20:
+                        confidence += 0.22
+                        features.append("standard_window_width")
+
+                # 2. Фактор внешнего периметра
+                if is_exterior:
+                    confidence += 0.05
+                    features.append("facade_boundary")
+
                 openings.append(
                     DetectedOpening(
                         type=opening_type,
                         position=round((frac_start + frac_end) / 2, 3),
                         width_m=round(width_m, 2),
+                        confidence=round(min(0.99, confidence), 2),
+                        features=features,
                     )
                 )
             gap_start_idx = None
@@ -474,6 +499,8 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
                         type="door",
                         position=0.5,
                         width_m=round(length_m, 2),
+                        confidence=0.95,
+                        features=["open_passage", "zero_wall_density"],
                     )
                 )
             else:
@@ -495,6 +522,8 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
                                 type="window",
                                 position=round(pos, 3),
                                 width_m=round(max(ww, wh) / pixels_per_meter, 2),
+                                confidence=0.98,
+                                features=["color_window", "blue_hsv"],
                             )
                         )
                     # Вертикальная стена
@@ -511,6 +540,8 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
                                 type="window",
                                 position=round(pos, 3),
                                 width_m=round(max(ww, wh) / pixels_per_meter, 2),
+                                confidence=0.98,
+                                features=["color_window", "blue_hsv"],
                             )
                         )
 

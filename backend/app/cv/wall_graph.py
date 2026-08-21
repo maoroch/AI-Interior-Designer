@@ -28,6 +28,8 @@ class GraphOpening:
     type: str  # "door" | "window" | "passage"
     position: float  # 0..1 вдоль стены
     width_m: float
+    confidence: float = 0.90
+    features: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -47,6 +49,7 @@ class RoomFace:
     polygon: list[Point2D]
     walls: list[WallEdge]
     area_sqm: float = 0.0
+    accessibility_score: float = 1.0  # 1.0 = гарантированный доступ через двери
 
 
 @dataclass
@@ -80,7 +83,7 @@ def build_wall_graph_from_segmentation(
 ) -> WallGraphResult:
     """
     Строит единый векторный граф стен по сегментированным комнатам,
-    устраняя дублирование смежных стен и объединяя проемы (двери/окна) на общих гранях.
+    устраняя дублирование смежных стен и проводя вероятностный консенсус проемов (дверей/окон).
     """
     nodes: list[Point2D] = []
     edges_map: dict[tuple[Point2D, Point2D], WallEdge] = {}
@@ -123,16 +126,20 @@ def build_wall_graph_from_segmentation(
 
             canon_key = get_canonical_key(p1, p2)
 
-            # Извлекаем проемы из исходного сегмента, если они есть
+            # Извлекаем проемы из исходного сегмента с оценкой вероятности
             openings: list[GraphOpening] = []
             if hasattr(room, "walls") and i < len(room.walls):
                 orig_wall = room.walls[i]
                 for o in getattr(orig_wall, "openings", []):
+                    conf = getattr(o, "confidence", 0.90)
+                    feats = getattr(o, "features", [])
                     openings.append(
                         GraphOpening(
                             type=o.type,
                             position=o.position,
                             width_m=o.width_m if hasattr(o, "width_m") else getattr(o, "width", 1.0),
+                            confidence=conf,
+                            features=feats,
                         )
                     )
 
@@ -147,11 +154,25 @@ def build_wall_graph_from_segmentation(
                 edges_map[canon_key] = edge
             else:
                 edge = edges_map[canon_key]
-                # Если на общей стене одна из комнат обнаружила проем, добавляем его на общее ребро
-                if openings and not edge.openings:
-                    edge.openings = openings
+                # Слияние проемов: если одна сторона определила дверь с большей уверенностью — объединяем
+                if openings:
+                    if not edge.openings:
+                        edge.openings = openings
+                    else:
+                        # Объединение и дедупликация проемов на ребре
+                        for new_op in openings:
+                            match = next((op for op in edge.openings if abs(op.position - new_op.position) < 0.18), None)
+                            if match:
+                                match.confidence = max(match.confidence, new_op.confidence)
+                                match.features = list(set(match.features + new_op.features))
+                            else:
+                                edge.openings.append(new_op)
 
             face_walls.append(edge)
+
+        # Проверка топологической связности комнаты (Accessibility Invariant)
+        door_count = sum(1 for edge in face_walls for o in edge.openings if o.type == "door" and o.confidence >= 0.5)
+        accessibility_score = 1.0 if door_count >= 1 else 0.0
 
         room_faces.append(
             RoomFace(
@@ -159,6 +180,7 @@ def build_wall_graph_from_segmentation(
                 polygon=snapped_pts,
                 walls=face_walls,
                 area_sqm=area_sqm,
+                accessibility_score=accessibility_score,
             )
         )
 

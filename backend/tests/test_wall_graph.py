@@ -76,3 +76,50 @@ def test_wall_graph_on_sample_floorplan():
     for r in graph.rooms:
         assert len(r.polygon) >= 3
         assert r.area_sqm > 0
+        assert r.accessibility_score >= 0.0
+
+
+def test_probabilistic_opening_confidence_and_features():
+    """Проверяет расчет вероятности и списков признаков для обнаруженных проемов."""
+    with open("sample_plans/plan1_studio.png", "rb") as f:
+        img_bytes = f.read()
+
+    seg_res = segment_floor_plan(img_bytes)
+    for r in seg_res.room_polygons:
+        for w in r.walls:
+            for o in w.openings:
+                assert 0.0 <= o.confidence <= 1.0
+                assert isinstance(o.features, list)
+                if o.type == "door":
+                    assert any("door" in f or "gap" in f or "passage" in f for f in o.features)
+
+
+def test_topological_consensus_merges_openings_with_max_confidence():
+    """Проверяет слияние проемов на смежных стенах с выбором максимальной уверенности."""
+    room1 = RoomPolygon(
+        points=[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)],
+        walls=[
+            WallSegment(start=(0.0, 0.0), end=(4.0, 0.0)),
+            WallSegment(start=(4.0, 0.0), end=(4.0, 4.0), openings=[DetectedOpening(type="door", position=0.5, width_m=0.9, confidence=0.95, features=["swing_arc"])]),
+            WallSegment(start=(4.0, 4.0), end=(0.0, 4.0)),
+            WallSegment(start=(0.0, 4.0), end=(0.0, 0.0)),
+        ],
+    )
+    room2 = RoomPolygon(
+        points=[(4.0, 0.0), (8.0, 0.0), (8.0, 4.0), (4.0, 4.0)],
+        walls=[
+            WallSegment(start=(4.0, 0.0), end=(8.0, 0.0)),
+            WallSegment(start=(8.0, 0.0), end=(8.0, 4.0)),
+            WallSegment(start=(8.0, 4.0), end=(4.0, 4.0)),
+            WallSegment(start=(4.0, 4.0), end=(4.0, 0.0), openings=[DetectedOpening(type="door", position=0.5, width_m=0.9, confidence=0.70, features=["wall_gap"])]),
+        ],
+    )
+
+    graph = build_wall_graph_from_segmentation([room1, room2])
+    shared_edge = [w for w in graph.edges if (w.start == (4.0, 0.0) and w.end == (4.0, 4.0)) or (w.start == (4.0, 4.0) and w.end == (4.0, 0.0))][0]
+    assert len(shared_edge.openings) == 1
+    # Должна быть выбрана максимальная вероятность 0.95 и объединены признаки
+    assert shared_edge.openings[0].confidence == 0.95
+    assert "swing_arc" in shared_edge.openings[0].features
+    assert "wall_gap" in shared_edge.openings[0].features
+
