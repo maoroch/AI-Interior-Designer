@@ -63,7 +63,7 @@ def _distance(p1: Point2D, p2: Point2D) -> float:
     return math.hypot(p2[0] - p1[0], p2[1] - p1[1])
 
 
-def _snap_point_to_nodes(pt: Point2D, nodes: list[Point2D], tol: float = 0.25) -> Point2D:
+def _snap_point_to_nodes(pt: Point2D, nodes: list[Point2D], tol: float = 0.45) -> Point2D:
     """Привязывает точку к ближайшей вершине графа, если расстояние меньше толерантности."""
     for n in nodes:
         if _distance(pt, n) <= tol:
@@ -80,7 +80,7 @@ def build_wall_graph_from_segmentation(
 ) -> WallGraphResult:
     """
     Строит единый векторный граф стен по сегментированным комнатам,
-    устраняя дублирование смежных стен и удаляя виртуальные фантомные границы.
+    устраняя дублирование смежных стен и объединяя проемы (двери/окна) на общих гранях.
     """
     nodes: list[Point2D] = []
     edges_map: dict[tuple[Point2D, Point2D], WallEdge] = {}
@@ -94,7 +94,7 @@ def build_wall_graph_from_segmentation(
         raw_pts = room.points if hasattr(room, "points") else room
 
         for pt in raw_pts:
-            snapped = _snap_point_to_nodes((round(pt[0], 2), round(pt[1], 2)), nodes, tol=0.25)
+            snapped = _snap_point_to_nodes((round(pt[0], 2), round(pt[1], 2)), nodes, tol=0.45)
             if not snapped_pts or snapped != snapped_pts[-1]:
                 snapped_pts.append(snapped)
 
@@ -123,20 +123,20 @@ def build_wall_graph_from_segmentation(
 
             canon_key = get_canonical_key(p1, p2)
 
-            if canon_key not in edges_map:
-                # Извлекаем проемы из исходного сегмента, если они есть
-                openings: list[GraphOpening] = []
-                if hasattr(room, "walls") and i < len(room.walls):
-                    orig_wall = room.walls[i]
-                    for o in getattr(orig_wall, "openings", []):
-                        openings.append(
-                            GraphOpening(
-                                type=o.type,
-                                position=o.position,
-                                width_m=o.width_m if hasattr(o, "width_m") else getattr(o, "width", 1.0),
-                            )
+            # Извлекаем проемы из исходного сегмента, если они есть
+            openings: list[GraphOpening] = []
+            if hasattr(room, "walls") and i < len(room.walls):
+                orig_wall = room.walls[i]
+                for o in getattr(orig_wall, "openings", []):
+                    openings.append(
+                        GraphOpening(
+                            type=o.type,
+                            position=o.position,
+                            width_m=o.width_m if hasattr(o, "width_m") else getattr(o, "width", 1.0),
                         )
+                    )
 
+            if canon_key not in edges_map:
                 edge = WallEdge(
                     id=f"wall_{len(edges_map) + 1}",
                     start=p1,
@@ -147,6 +147,9 @@ def build_wall_graph_from_segmentation(
                 edges_map[canon_key] = edge
             else:
                 edge = edges_map[canon_key]
+                # Если на общей стене одна из комнат обнаружила проем, добавляем его на общее ребро
+                if openings and not edge.openings:
+                    edge.openings = openings
 
             face_walls.append(edge)
 
