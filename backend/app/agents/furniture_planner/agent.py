@@ -1,35 +1,70 @@
 """
-Agent 5 — Furniture Planner.
+Agent 5 — Furniture Planner (Decoupled Semantic CAD Architecture).
 
-Два шага:
-1. LLM (Groq) подбирает набор мебели под тип комнаты + пожелания пользователя
-   (стиль, состав семьи, бюджет) и даёт для каждого предмета реалистичные
-   габариты в метрах — MVP рендерит мебель параметрическими примитивами
-   (боксами по этим габаритам), без GLTF-моделей (см. README, фаза 2).
-2. Простой алгоритм расстановки вдоль периметра комнаты, который:
-   - не ставит мебель поверх дверных/оконных проёмов;
-   - оставляет зону открывания двери свободной;
-   - оставляет минимальный проход (0.6м) от каждого предмета.
-
-Это MVP-уровень эргономики — не полноценный solver, а быстрая эвристика,
-которая тем не менее валидна для реальных прямоугольных комнат.
+1. Локальный Semantic Bridge формирует понятный человеку бриф помещения в метрах.
+2. LLM (Groq) генерирует профессиональный план расстановки по правилу 5 слоёв интерьера:
+   - Слой 1: Основной каркас (диван, кровать, шкаф, ТВ-тумба, обеденный/рабочий стол)
+   - Слой 2: Компаньоны (журнальный столик, кресло, прикроватные тумбы)
+   - Слой 3: Текстиль пола (ковёр rug для объединения зоны)
+   - Слой 4: Вертикальные акценты и декор (высокие растения plant, торшеры floor_lamp, стеллажи bookshelf)
+3. Детерминированный CAD-компилятор (compiler.py) рассчитывает точные 3D-координаты для Three.js.
 """
 from __future__ import annotations
 
-import math
-import uuid
+import logging
+from typing import Any
 
+from app.agents.furniture_planner.compiler import (
+    DEFAULT_DIMS,
+    compile_semantic_layout_to_3d,
+)
+from app.agents.furniture_planner.math_engine import (
+    ChromaticBalanceCalculator,
+    GoldenRatioScaler,
+    OccupancyBudgetOptimizer,
+)
 from app.core.llm import complete_json
+from app.cv.semantic_bridge import generate_semantic_room_brief
+from app.cv.wall_graph import RoomFace, WallEdge
 from app.models.project import UserPreferences
 from app.models.scene import FurnitureItem, Room
 
-SYSTEM_PROMPT = """Ты — дизайнер, подбирающий мебель. Для заданного типа комнаты
-и пожеланий клиента (стиль, бюджет, дети, животные, любит принимать гостей)
-подбери список мебели. Для каждого предмета укажи: type (короткий английский
-идентификатор вроде sofa, bed, dining_table, wardrobe, desk, tv_stand),
-material, color, и dimensions_m [ширина, высота, глубина].
-Не превышай разумное количество предметов для площади комнаты.
-Верни JSON: {"items": [{"type": str, "material": str, "color": str, "dimensions_m": [w,h,d]}]}."""
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = """Ты — ведущий архитектор-дизайнер интерьеров премиум-класса и эксперт по эргономике.
+Твоя задача — наполнить комнату полноценным, уютным, функциональным набором мебели, чтобы пространство не выглядело пустым.
+
+Используй архитектурное правило 5 слоёв интерьера:
+1. Основные фокусные якоря:
+   - Гостиная/Студия: диван (sofa), ТВ-тумба (tv_stand), обеденная группа (dining_table) или рабочий стол (desk).
+   - Спальня: двуспальная кровать (bed), платяной шкаф (wardrobe).
+2. Эргономичные компаньоны:
+   - Журнальный столик (coffee_table), кресло для отдыха (armchair), прикроватные тумбы (nightstand).
+3. Напольный текстиль:
+   - Большой ковёр (rug) в зоне отдыха или спальни (объединяет диван и столик, убирает пустоту пола).
+4. Вертикали, освещение и декор:
+   - Высокие комнатные растения в кашпо (plant), напольный торшер (floor_lamp), открытый стеллаж (bookshelf).
+
+Правила размещения:
+- Для комнат >= 18 кв.м создавай от 7 до 12 предметов с чётким зонированием (Lounge + Work/Dining).
+- Для спален и комнат 10-18 кв.м создавай 5-8 предметов.
+- Для прихожих создавай шкаф (wardrobe), банкетку/обувницу (bench) и зеркало (mirror).
+- Крупные предметы привязывай к глухим стенам (solid) или под окна (under_window).
+- Высокие шкафы не ставь перед окнами.
+- Дверные проёмы и проходы должны оставаться свободными.
+
+Формат для каждого предмета:
+- type: sofa, bed, dining_table, desk, chair, armchair, wardrobe, tv_stand, coffee_table, bookshelf, nightstand, plant, floor_lamp, rug, bench, mirror
+- anchor_wall: "north", "south", "east", "west", "center"
+- placement: "center", "left", "right"
+- distance_from_wall_cm: отступ от стены в см (0-20)
+- dimensions_cm: {"width": int, "height": int, "depth": int}
+- material: fabric, leather, oak, walnut, boucle, metal
+- color: HEX-код цвета
+
+Верни строго валидный JSON:
+{"items": [{"type": "sofa", "anchor_wall": "south", "placement": "center", "distance_from_wall_cm": 10, "dimensions_cm": {"width": 210, "height": 85, "depth": 90}, "material": "fabric", "color": "#4A5568"}]}
+"""
 
 MIN_CLEARANCE_M = 0.6
 DOOR_CLEARANCE_M = 0.9
@@ -42,11 +77,11 @@ def _room_bbox(room: Room) -> tuple[float, float, float, float]:
 
 
 def _door_positions(room: Room) -> list[tuple[float, float]]:
-    """Приближённые мировые координаты дверных проёмов (для зон исключения)."""
     positions = []
     for wall in room.walls:
         for opening in wall.openings:
-            if opening.type != "door":
+            op_type = opening.type.value if hasattr(opening.type, "value") else str(opening.type)
+            if op_type != "door":
                 continue
             x = wall.start[0] + (wall.end[0] - wall.start[0]) * opening.position
             y = wall.start[1] + (wall.end[1] - wall.start[1]) * opening.position
@@ -54,100 +89,105 @@ def _door_positions(room: Room) -> list[tuple[float, float]]:
     return positions
 
 
-def _too_close_to_door(x: float, y: float, doors: list[tuple[float, float]]) -> bool:
-    return any(math.hypot(x - dx, y - dy) < DOOR_CLEARANCE_M for dx, dy in doors)
+def _place_along_perimeter(room: Room, items: list[dict[str, Any]]) -> list[FurnitureItem]:
+    return compile_semantic_layout_to_3d(room, items)
 
 
-async def _select_furniture_set(room: Room, preferences: UserPreferences | None) -> list[dict]:
-    prefs_summary = preferences.model_dump() if preferences else {}
-    result = await complete_json(
-        SYSTEM_PROMPT,
-        f"Тип комнаты: {room.type.value}\nПожелания: {prefs_summary}",
-    )
-    return result.get("items", [])
-
-
-DEFAULT_DIMS: dict[str, tuple[float, float, float]] = {
-    "sofa": (2.0, 0.85, 0.9),
-    "bed": (1.8, 1.0, 2.0),
-    "dining_table": (1.4, 0.75, 0.8),
-    "table": (1.2, 0.75, 0.7),
-    "desk": (1.2, 0.75, 0.6),
-    "chair": (0.5, 0.85, 0.5),
-    "wardrobe": (1.2, 2.0, 0.6),
-    "tv_stand": (1.5, 0.5, 0.4),
-    "bookshelf": (0.8, 1.8, 0.35),
-    "nightstand": (0.5, 0.5, 0.4),
-    "coffee_table": (1.0, 0.45, 0.6),
-}
-
-
-def _safe_dimensions(item: dict) -> tuple[float, float, float]:
-    item_type = str(item.get("type", "")).lower()
-    default_w, default_h, default_d = DEFAULT_DIMS.get(item_type, (0.8, 0.8, 0.8))
-
-    raw = item.get("dimensions_m")
-    if isinstance(raw, (list, tuple)):
-        clean = []
-        for val in raw:
-            try:
-                clean.append(float(val))
-            except (ValueError, TypeError):
-                pass
-        if len(clean) >= 3:
-            return clean[0], clean[1], clean[2]
-        if len(clean) == 2:
-            return clean[0], default_h, clean[1]
-        if len(clean) == 1:
-            return clean[0], default_h, clean[0]
-
-    return default_w, default_h, default_d
-
-
-def _place_along_perimeter(room: Room, items: list[dict]) -> list[FurnitureItem]:
-    min_x, min_y, max_x, max_y = _room_bbox(room)
-    doors = _door_positions(room)
-
-    placed: list[FurnitureItem] = []
-    cursor = MIN_CLEARANCE_M  # смещение вдоль первой (нижней) стены комнаты
-
-    for item in items:
-        w, h, d = _safe_dimensions(item)
-        x = min_x + cursor + w / 2
-        y = min_y + d / 2 + 0.1  # почти вплотную к "нижней" стене bbox'а
-
-        if x + w / 2 > max_x - MIN_CLEARANCE_M:
-            # не влезло вдоль этой стены — переносим на следующую условную "полосу"
-            cursor = MIN_CLEARANCE_M
-            x = min_x + cursor + w / 2
-            y += d + MIN_CLEARANCE_M
-
-        if _too_close_to_door(x, y, doors):
-            y += DOOR_CLEARANCE_M  # простое смещение от зоны двери
-
-        placed.append(
-            FurnitureItem(
-                id=f"f_{uuid.uuid4().hex[:8]}",
-                room_id=room.id,
-                type=item.get("type", "unknown"),
-                style=None,
-                position=(round(x, 2), 0.0, round(y, 2)),
-                rotation_deg=0,
-                dimensions=(w, h, d),
-                material=item.get("material"),
-                color=item.get("color"),
-                model_ref=None,
+def _build_room_face_from_room(room: Room) -> RoomFace:
+    wall_edges = []
+    for i, w in enumerate(room.walls):
+        wall_edges.append(
+            WallEdge(
+                id=f"wall_{i+1}",
+                start=w.start,
+                end=w.end,
+                thickness=w.thickness if hasattr(w, "thickness") else 0.2,
+                openings=[],
+                is_exterior=False,
             )
         )
-        cursor += w + MIN_CLEARANCE_M
+    return RoomFace(
+        id=room.id,
+        polygon=room.polygon,
+        walls=wall_edges,
+        area_sqm=getattr(room, "area_sqm", 0.0),
+    )
 
-    return placed
 
+def _get_rich_fallback_items(room: Room, preferences: UserPreferences | None) -> list[dict[str, Any]]:
+    """Профессиональный гармоничный набор мебели на случай отсутствия ответа LLM."""
+    r_type = room.type.value if hasattr(room.type, "value") else str(room.type)
+    area = getattr(room, "area_sqm", 20.0)
+
+    # 1. Большая гостиная или открытая студия (от 15 кв.м)
+    if area >= 15.0 and r_type in ["living_room", "studio", "open_space", "lounge"]:
+        return [
+            # Зона отдыха (Lounge)
+            {"type": "rug", "anchor_wall": "center", "placement": "center", "dimensions_cm": {"width": 240, "height": 2, "depth": 180}, "material": "wool", "color": "#E2DCD5"},
+            {"type": "sofa", "anchor_wall": "south", "placement": "center", "distance_from_wall_cm": 10, "dimensions_cm": {"width": 210, "height": 85, "depth": 90}, "material": "fabric", "color": "#3B4252"},
+            {"type": "coffee_table", "anchor_wall": "center", "placement": "center", "dimensions_cm": {"width": 100, "height": 45, "depth": 60}, "material": "oak", "color": "#D4A373"},
+            {"type": "tv_stand", "anchor_wall": "north", "placement": "center", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 160, "height": 50, "depth": 40}, "material": "walnut", "color": "#4C3828"},
+            {"type": "armchair", "anchor_wall": "east", "placement": "center", "distance_from_wall_cm": 15, "dimensions_cm": {"width": 85, "height": 80, "depth": 85}, "material": "boucle", "color": "#ECEFF4"},
+            # Рабочее место / библиотека
+            {"type": "desk", "anchor_wall": "west", "placement": "left", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 120, "height": 75, "depth": 60}, "material": "oak", "color": "#5E81AC"},
+            {"type": "bookshelf", "anchor_wall": "west", "placement": "right", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 90, "height": 180, "depth": 35}, "material": "metal", "color": "#2E3440"},
+            # Вертикальные акценты
+            {"type": "floor_lamp", "anchor_wall": "south", "placement": "right", "distance_from_wall_cm": 15, "dimensions_cm": {"width": 40, "height": 160, "depth": 40}, "material": "brass", "color": "#D08770"},
+            {"type": "plant", "anchor_wall": "north", "placement": "left", "distance_from_wall_cm": 15, "dimensions_cm": {"width": 45, "height": 130, "depth": 45}, "material": "ceramic", "color": "#A3BE8C"},
+        ]
+    # 2. Спальня (от 10 кв.м)
+    elif r_type == "bedroom" and area >= 10.0:
+        return [
+            {"type": "rug", "anchor_wall": "south", "placement": "center", "dimensions_cm": {"width": 220, "height": 2, "depth": 180}, "material": "wool", "color": "#E5E9F0"},
+            {"type": "bed", "anchor_wall": "south", "placement": "center", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 180, "height": 100, "depth": 200}, "material": "fabric", "color": "#434C5E"},
+            {"type": "nightstand", "anchor_wall": "south", "placement": "left", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 45, "height": 50, "depth": 40}, "material": "oak", "color": "#D4A373"},
+            {"type": "nightstand", "anchor_wall": "south", "placement": "right", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 45, "height": 50, "depth": 40}, "material": "oak", "color": "#D4A373"},
+            {"type": "wardrobe", "anchor_wall": "west", "placement": "center", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 140, "height": 210, "depth": 60}, "material": "walnut", "color": "#2E3440"},
+            {"type": "plant", "anchor_wall": "east", "placement": "center", "distance_from_wall_cm": 15, "dimensions_cm": {"width": 40, "height": 120, "depth": 40}, "material": "ceramic", "color": "#8FBCBB"},
+        ]
+    # 3. Прихожая / Коридор / Санузел (5-14 кв.м)
+    elif area >= 5.0:
+        return [
+            {"type": "wardrobe", "anchor_wall": "west", "placement": "center", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 120, "height": 210, "depth": 60}, "material": "oak", "color": "#4C566A"},
+            {"type": "bench", "anchor_wall": "north", "placement": "center", "distance_from_wall_cm": 5, "dimensions_cm": {"width": 90, "height": 45, "depth": 40}, "material": "leather", "color": "#D08770"},
+            {"type": "mirror", "anchor_wall": "south", "placement": "center", "distance_from_wall_cm": 0, "dimensions_cm": {"width": 60, "height": 160, "depth": 10}, "material": "metal", "color": "#ECEFF4"},
+        ]
+    # 4. Компактное помещение (< 5 кв.м)
+    else:
+        return [
+            {"type": "mirror", "anchor_wall": "north", "placement": "center", "distance_from_wall_cm": 0, "dimensions_cm": {"width": 60, "height": 80, "depth": 5}, "material": "glass", "color": "#ECEFF4"},
+            {"type": "plant", "anchor_wall": "south", "placement": "right", "distance_from_wall_cm": 10, "dimensions_cm": {"width": 30, "height": 60, "depth": 30}, "material": "ceramic", "color": "#A3BE8C"},
+        ]
+
+
+async def _select_furniture_set(room: Room, preferences: UserPreferences | None) -> list[dict[str, Any]]:
+    prefs_summary = preferences.model_dump() if preferences else {}
+    room_face = _build_room_face_from_room(room)
+    brief = generate_semantic_room_brief(room_face, room_type=room.type.value)
+
+    user_prompt = (
+        f"{brief.text_summary}\n\n"
+        f"Пожелания клиента:\n"
+        f"- Стиль: {prefs_summary.get('style', 'Modern')}\n"
+        f"- Состав семьи / дети / животные: {prefs_summary.get('family_members', 1)}, pets={prefs_summary.get('pets', False)}\n"
+        f"- Бюджет: {prefs_summary.get('budget', 'Medium')}"
+    )
+
+    try:
+        result = await complete_json(SYSTEM_PROMPT, user_prompt)
+        items = result.get("items", [])
+        if isinstance(items, list) and len(items) >= 3:
+            return items
+    except Exception as e:
+        logger.warning(f"Semantic furniture selection failed, using rich fallback: {e}")
+
+    return _get_rich_fallback_items(room, preferences)
 
 
 async def run(rooms: list[Room], preferences: UserPreferences | None) -> list[FurnitureItem]:
     all_furniture: list[FurnitureItem] = []
     for room in rooms:
         items = await _select_furniture_set(room, preferences)
-        all_furniture.extend(_place_along_perimeter(room, items))
+        placed = compile_semantic_layout_to_3d(room, items)
+        all_furniture.extend(placed)
     return all_furniture

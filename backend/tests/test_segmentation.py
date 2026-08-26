@@ -83,11 +83,12 @@ def test_room_bounding_box_matches_drawn_walls():
     room = result.room_polygons[0]
     xs = [p[0] for p in room.points]
     ys = [p[1] for p in room.points]
-    # Стены нарисованы в px (50,50)-(250,200) => в метрах (1,1)-(5,4) при 50px/м.
-    assert min(xs) == pytest.approx(1.0, abs=0.2)
-    assert max(xs) == pytest.approx(5.0, abs=0.2)
-    assert min(ys) == pytest.approx(1.0, abs=0.2)
-    assert max(ys) == pytest.approx(4.0, abs=0.2)
+    # Стены нарисованы в px (50,50)-(250,200) => в метрах (50/ppm, 50/ppm)-(250/ppm, 200/ppm)
+    ppm = result.pixels_per_meter
+    assert min(xs) == pytest.approx(50.0 / ppm, abs=0.2)
+    assert max(xs) == pytest.approx(250.0 / ppm, abs=0.2)
+    assert min(ys) == pytest.approx(50.0 / ppm, abs=0.2)
+    assert max(ys) == pytest.approx(200.0 / ppm, abs=0.2)
 
 
 def test_detects_door_gap_in_wall():
@@ -153,8 +154,9 @@ def test_wide_interior_opening_is_classified_as_door():
     assert ok
     result = segment_floor_plan(buf.tobytes())
 
+    wall_x_m = 250.0 / result.pixels_per_meter
     interior_openings = [
-        o for r in result.room_polygons for w in r.walls if abs(w.start[0] - 5.0) < 0.5 and abs(w.end[0] - 5.0) < 0.5 for o in w.openings
+        o for r in result.room_polygons for w in r.walls if abs(w.start[0] - wall_x_m) < 0.5 and abs(w.end[0] - wall_x_m) < 0.5 for o in w.openings
     ]
     assert len(interior_openings) >= 1
     for o in interior_openings:

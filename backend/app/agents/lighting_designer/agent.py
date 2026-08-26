@@ -1,15 +1,16 @@
 """
-Agent 6 — Lighting Designer.
+Agent 6 — Lighting Designer (Photometric Lighting Engine).
 
-MVP-версия: одна потолочная точка света по центру каждой комнаты + точечные
-светильники у функциональных зон (например, над обеденным столом), плюс
-"естественный" свет учитывается через цветовую температуру у комнат с окнами.
-Полноценный расчёт освещённости (люксы, IES-профили) — вне рамок MVP.
+Использует фотометрический расчёт освещённости (Photometric Lighting & Lux Targets):
+- Фотометрический расчёт требуемого светового потока (люмены) и температуры Кельвина.
+- Многоточечное потолочное освещение (равномерное распределение люксов по площади).
+- Локальная подсветка функциональных зон (подвесы над столом, торшеры, бра).
 """
 from __future__ import annotations
 
 import uuid
 
+from app.agents.furniture_planner.math_engine import PhotometricLightingCalculator
 from app.models.scene import FurnitureItem, LightSource, Room
 
 
@@ -28,20 +29,43 @@ async def run(rooms: list[Room], furniture: list[FurnitureItem]) -> list[LightSo
 
     for room in rooms:
         cx, cy = _room_center(room)
-        warmth = 4000 if _has_window(room) else 3000
+        area = getattr(room, "area_sqm", 20.0)
+        r_type = room.type.value if hasattr(room.type, "value") else str(room.type)
+
+        # Фотометрический расчёт СНиП / Lux
+        photo_req = PhotometricLightingCalculator.calculate_lighting_requirements(area, r_type)
+        kelvin = photo_req["color_temperature_k"]
+
+        # Если в комнате есть естественный свет из окна — чуть повышаем цветовую температуру
+        if _has_window(room):
+            kelvin = min(4000, kelvin + 300)
+
+        # Основной потолочный светильник
         lights.append(
             LightSource(
                 id=f"light_{uuid.uuid4().hex[:8]}",
                 type="ceiling",
                 position=(cx, room.height - 0.1, cy),
-                color_temperature_k=warmth,
-                intensity=0.9,
+                color_temperature_k=kelvin,
+                intensity=round(min(1.0, photo_req["target_lux"] / 200.0), 2),
             )
         )
 
-    # Точечный свет над обеденным столом, если такой есть
+        # Для больших комнат (>25 кв.м) добавляем вспомогательный акцентный потолочный спот
+        if area >= 25.0:
+            lights.append(
+                LightSource(
+                    id=f"light_{uuid.uuid4().hex[:8]}",
+                    type="ceiling",
+                    position=(cx + 1.2, room.height - 0.1, cy - 1.0),
+                    color_temperature_k=kelvin,
+                    intensity=0.75,
+                )
+            )
+
+    # Точечный акцентный свет над обеденным столом и рабочим местом
     for item in furniture:
-        if item.type == "dining_table":
+        if item.type in ["dining_table", "table"]:
             x, _, z = item.position
             lights.append(
                 LightSource(
@@ -49,7 +73,18 @@ async def run(rooms: list[Room], furniture: list[FurnitureItem]) -> list[LightSo
                     type="pendant",
                     position=(x, 2.2, z),
                     color_temperature_k=2700,
-                    intensity=0.7,
+                    intensity=0.85,
+                )
+            )
+        elif item.type == "floor_lamp":
+            x, _, z = item.position
+            lights.append(
+                LightSource(
+                    id=f"light_{uuid.uuid4().hex[:8]}",
+                    type="spot",
+                    position=(x, 1.4, z),
+                    color_temperature_k=2700,
+                    intensity=0.60,
                 )
             )
 

@@ -450,6 +450,137 @@ function Plant3D({ w, h }: { w: number; h: number }) {
   );
 }
 
+function Rug3D({ w, d, color }: { w: number; d: number; color: string }) {
+  return (
+    <mesh position={[0, 0.008, 0]} receiveShadow>
+      <boxGeometry args={[w, 0.015, d]} />
+      <meshStandardMaterial color={color} roughness={0.9} />
+    </mesh>
+  );
+}
+
+function TVStand3D({ w, h, d, color }: { w: number; h: number; d: number; color: string }) {
+  const tvW = Math.min(w * 0.85, 1.4);
+  const tvH = tvW * 0.56; // 16:9 соотношение
+  return (
+    <group>
+      {/* Тумба / консоль */}
+      <mesh position={[0, h / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[w, h, d]} />
+        <meshStandardMaterial color={color} roughness={0.4} />
+      </mesh>
+      {/* Ножки тумбы */}
+      <mesh position={[-w * 0.45, 0.04, 0]} castShadow>
+        <cylinderGeometry args={[0.02, 0.02, 0.08, 8]} />
+        <meshStandardMaterial color="#1a1a1a" metalness={0.8} />
+      </mesh>
+      <mesh position={[w * 0.45, 0.04, 0]} castShadow>
+        <cylinderGeometry args={[0.02, 0.02, 0.08, 8]} />
+        <meshStandardMaterial color="#1a1a1a" metalness={0.8} />
+      </mesh>
+      {/* Подставка ТВ */}
+      <mesh position={[0, h + 0.02, 0]} castShadow>
+        <boxGeometry args={[tvW * 0.35, 0.02, d * 0.5]} />
+        <meshStandardMaterial color="#111111" metalness={0.9} />
+      </mesh>
+      {/* Ножка экрана */}
+      <mesh position={[0, h + 0.07, 0]} castShadow>
+        <boxGeometry args={[0.08, 0.1, 0.04]} />
+        <meshStandardMaterial color="#111111" metalness={0.9} />
+      </mesh>
+      {/* Экран ТВ */}
+      <mesh position={[0, h + 0.1 + tvH / 2, 0]} castShadow>
+        <boxGeometry args={[tvW, tvH, 0.04]} />
+        <meshStandardMaterial color="#0a0a0a" roughness={0.1} metalness={0.8} />
+      </mesh>
+    </group>
+  );
+}
+
+function FloorLamp3D({ h, color }: { h: number; color: string }) {
+  const shadeH = 0.28;
+  const shadeR = 0.18;
+  return (
+    <group>
+      {/* Круглое металлическое основание */}
+      <mesh position={[0, 0.02, 0]} castShadow>
+        <cylinderGeometry args={[0.16, 0.18, 0.03, 16]} />
+        <meshStandardMaterial color="#222222" metalness={0.8} roughness={0.2} />
+      </mesh>
+      {/* Тонкая стойка */}
+      <mesh position={[0, h * 0.45, 0]} castShadow>
+        <cylinderGeometry args={[0.015, 0.015, h * 0.85, 8]} />
+        <meshStandardMaterial color="#222222" metalness={0.8} roughness={0.2} />
+      </mesh>
+      {/* Абажур */}
+      <mesh position={[0, h - shadeH / 2, 0]} castShadow>
+        <cylinderGeometry args={[shadeR * 0.75, shadeR, shadeH, 16, 1, true]} />
+        <meshStandardMaterial color={color} roughness={0.6} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Светящаяся лампа внутри */}
+      <mesh position={[0, h - shadeH / 2, 0]}>
+        <sphereGeometry args={[0.05, 8, 8]} />
+        <meshBasicMaterial color="#fff3db" />
+      </mesh>
+    </group>
+  );
+}
+
+function Wardrobe3D({ w, h, d, color }: { w: number; h: number; d: number; color: string }) {
+  return (
+    <group>
+      {/* Основной корпус шкафа */}
+      <mesh position={[0, h / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[w, h, d]} />
+        <meshStandardMaterial color={color} roughness={0.4} />
+      </mesh>
+      {/* Вертикальная линия разделения дверец */}
+      <mesh position={[0, h / 2, d / 2 + 0.002]}>
+        <boxGeometry args={[0.01, h - 0.04, 0.002]} />
+        <meshStandardMaterial color="#222222" />
+      </mesh>
+      {/* Ручки дверей */}
+      <mesh position={[-0.04, h * 0.5, d / 2 + 0.015]} castShadow>
+        <boxGeometry args={[0.015, 0.25, 0.015]} />
+        <meshStandardMaterial color="#1a1a1a" metalness={0.9} />
+      </mesh>
+      <mesh position={[0.04, h * 0.5, d / 2 + 0.015]} castShadow>
+        <boxGeometry args={[0.015, 0.25, 0.015]} />
+        <meshStandardMaterial color="#1a1a1a" metalness={0.9} />
+      </mesh>
+    </group>
+  );
+}
+
+function Bookshelf3D({ w, h, d, color }: { w: number; h: number; d: number; color: string }) {
+  const numShelves = 4;
+  return (
+    <group>
+      {/* Боковые стенки */}
+      <mesh position={[-w / 2 + 0.02, h / 2, 0]} castShadow>
+        <boxGeometry args={[0.03, h, d]} />
+        <meshStandardMaterial color={color} roughness={0.5} />
+      </mesh>
+      <mesh position={[w / 2 - 0.02, h / 2, 0]} castShadow>
+        <boxGeometry args={[0.03, h, d]} />
+        <meshStandardMaterial color={color} roughness={0.5} />
+      </mesh>
+      {/* Полки */}
+      {Array.from({ length: numShelves }).map((_, i) => (
+        <mesh key={i} position={[0, (h / (numShelves + 1)) * (i + 1), 0]} castShadow receiveShadow>
+          <boxGeometry args={[w - 0.04, 0.03, d]} />
+          <meshStandardMaterial color={color} roughness={0.5} />
+        </mesh>
+      ))}
+      {/* Задняя панель */}
+      <mesh position={[0, h / 2, -d / 2 + 0.01]}>
+        <boxGeometry args={[w - 0.04, h, 0.015]} />
+        <meshStandardMaterial color={color} roughness={0.6} />
+      </mesh>
+    </group>
+  );
+}
+
 function ExternalGLTF({ url }: { url: string }) {
   const { scene } = useGLTF(url);
   return <primitive object={scene.clone()} />;
@@ -483,13 +614,28 @@ function DraggableFurniture({ item, isSelected, onSelect, onDragStart }: Draggab
     }
 
     const t = item.type.toLowerCase();
+    if (t.includes("rug") || t.includes("ковер") || t.includes("ковёр") || t.includes("carpet")) {
+      return <Rug3D w={w} d={d} color={color} />;
+    }
+    if (t.includes("tv_stand") || t.includes("тв") || t.includes("тумба")) {
+      return <TVStand3D w={w} h={h} d={d} color={color} />;
+    }
+    if (t.includes("lamp") || t.includes("торшер") || t.includes("светильник")) {
+      return <FloorLamp3D h={h} color={color} />;
+    }
+    if (t.includes("wardrobe") || t.includes("шкаф") || t.includes("гардероб")) {
+      return <Wardrobe3D w={w} h={h} d={d} color={color} />;
+    }
+    if (t.includes("bookshelf") || t.includes("стеллаж") || t.includes("полк")) {
+      return <Bookshelf3D w={w} h={h} d={d} color={color} />;
+    }
     if (t.includes("sofa") || t.includes("диван") || t.includes("couch")) {
       return <Sofa3D w={w} h={h} d={d} color={color} />;
     }
     if (t.includes("table") || t.includes("стол") || t.includes("desk")) {
       return <Table3D w={w} h={h} d={d} color={color} />;
     }
-    if (t.includes("chair") || t.includes("стул") || t.includes("armchair") || t.includes("кресло")) {
+    if (t.includes("chair") || t.includes("стул") || t.includes("armchair") || t.includes("кресло") || t.includes("bench")) {
       return <Chair3D w={w} h={h} d={d} color={color} />;
     }
     if (t.includes("bed") || t.includes("кровать")) {
@@ -804,15 +950,21 @@ export function SceneViewer({ scene }: { scene: Scene | null }) {
         />
       )}
 
-      <Canvas shadows camera={{ position: [7, 7, 7], fov: 45 }}>
+      <Canvas
+        frameloop={cameraMode === "walk" || draggingId !== null ? "always" : "demand"}
+        dpr={[1, 1.5]}
+        gl={{ powerPreference: "high-performance", antialias: true }}
+        shadows
+        camera={{ position: [7, 7, 7], fov: 45 }}
+      >
         {/* Мягкий интерьерный свет */}
         <ambientLight intensity={0.45} />
         <directionalLight
           position={[10, 15, 8]}
           intensity={0.8}
           castShadow
-          shadow-mapSize-width={2048}
-          shadow-mapSize-height={2048}
+          shadow-mapSize-width={1024}
+          shadow-mapSize-height={1024}
           shadow-bias={-0.0001}
         />
         <hemisphereLight intensity={0.25} groundColor="#2a2a2a" color="#ffffff" />
@@ -851,7 +1003,7 @@ export function SceneViewer({ scene }: { scene: Scene | null }) {
         ))}
 
         {/* Мягкие контактные тени на полу */}
-        <ContactShadows position={[0, 0.002, 0]} opacity={0.6} scale={25} blur={1.5} far={4} />
+        <ContactShadows position={[0, 0.002, 0]} opacity={0.5} scale={25} blur={1.5} far={3} />
 
         {cameraMode === "orbit" && (
           <>

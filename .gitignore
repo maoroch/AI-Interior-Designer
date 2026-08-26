@@ -7,3 +7,4 @@ venv/
 .env.local
 mongo_data/
 minio_data/
+

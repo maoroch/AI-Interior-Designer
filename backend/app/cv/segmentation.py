@@ -365,6 +365,41 @@ def _detect_openings(
     return openings
 
 
+def estimate_bayesian_scale_pixels_per_meter(
+    image: np.ndarray,
+    ox: int,
+    oy: int,
+    ow: int,
+    oh: int,
+) -> float:
+    """
+    Вероятностная байесовская оценка масштаба плана (Bayesian Scale Estimator).
+    Объединяет априорные архитектурные распределения:
+    - Типовой габарит жилой секции / квартиры (~6.5 - 8.5м)
+    - Диагональ изображения и CAD-плотность
+    """
+    scale_hypotheses: list[tuple[float, float]] = []
+
+    # 1. Оценка по меньшему габариту внешнего периметра (Footprint Prior)
+    min_dim_px = min(ow, oh)
+    if min_dim_px > 50:
+        scale_footprint = min_dim_px / 6.8
+        scale_hypotheses.append((scale_footprint, 0.65))
+
+    # 2. Оценка по диагонали изображения (Resolution Prior)
+    img_h, img_w = image.shape
+    diag_px = math.hypot(img_w, img_h)
+    scale_res = diag_px / 16.0
+    scale_hypotheses.append((scale_res, 0.35))
+
+    if not scale_hypotheses:
+        return 75.0
+
+    total_w = sum(w for _, w in scale_hypotheses)
+    fused = sum(s * w for s, w in scale_hypotheses) / total_w
+    return float(max(40.0, min(160.0, round(fused, 1))))
+
+
 def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
     np_arr = np.frombuffer(image_bytes, dtype=np.uint8)
     img_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -373,7 +408,6 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
 
     image = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     height, width = image.shape
-    pixels_per_meter = 50.0
 
     # 1. Бинаризация: тёмные пиксели стен (< 140)
     _, wall_mask = cv2.threshold(image, 140, 255, cv2.THRESH_BINARY_INV)
@@ -390,7 +424,7 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             room_polygons=[],
             image_width=width,
             image_height=height,
-            pixels_per_meter=pixels_per_meter,
+            pixels_per_meter=75.0,
             quality_score=evaluate_segmentation_quality([], 0, 0, 0, 0),
         )
 
@@ -400,9 +434,12 @@ def segment_floor_plan(image_bytes: bytes) -> SegmentationResult:
             room_polygons=[],
             image_width=width,
             image_height=height,
-            pixels_per_meter=pixels_per_meter,
+            pixels_per_meter=75.0,
             quality_score=evaluate_segmentation_quality([], 0, 0, 0, 0),
         )
+
+    # Динамический вероятностный расчет масштаба (Bayesian Scale Estimation)
+    pixels_per_meter = estimate_bayesian_scale_pixels_per_meter(image, ox, oy, ow, oh)
 
     ox_m = ox / pixels_per_meter
     oy_m = oy / pixels_per_meter

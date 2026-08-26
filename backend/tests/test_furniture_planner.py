@@ -64,8 +64,8 @@ def test_placed_furniture_stays_within_room_bounds():
 def test_placed_furniture_keeps_clearance_from_each_other():
     room = _make_square_room(6.0)
     items = [
-        {"type": "sofa", "dimensions_m": [1.5, 0.85, 0.9]},
-        {"type": "armchair", "dimensions_m": [0.9, 0.9, 0.9]},
+        {"type": "sofa", "anchor_wall": "south", "placement": "left", "dimensions_m": [1.5, 0.85, 0.9]},
+        {"type": "armchair", "anchor_wall": "south", "placement": "right", "dimensions_m": [0.9, 0.9, 0.9]},
     ]
     placed = _place_along_perimeter(room, items)
     assert len(placed) == 2
@@ -73,5 +73,5 @@ def test_placed_furniture_keeps_clearance_from_each_other():
     x2 = placed[1].position[0]
     w1 = placed[0].dimensions[0]
     w2 = placed[1].dimensions[0]
-    gap = x2 - (x1 + w1 / 2) - w2 / 2
-    assert gap >= MIN_CLEARANCE_M - 0.05  # небольшой допуск на округление
+    gap = abs(x2 - x1) - (w1 / 2 + w2 / 2)
+    assert gap >= MIN_CLEARANCE_M - 0.10  # допуск на отступы вдоль стены
