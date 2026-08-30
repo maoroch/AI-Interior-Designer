@@ -897,6 +897,17 @@ export function SceneViewer({ scene }: { scene: Scene | null }) {
 
   const updateFurniture = useAppStore((s) => s.updateFurniture);
 
+  const sceneCenter = useMemo(() => {
+    if (!scene?.rooms?.length) return [0, 0.8, 0] as [number, number, number];
+    const allPts = scene.rooms.flatMap((r) => r.polygon);
+    if (!allPts.length) return [0, 0.8, 0] as [number, number, number];
+    const xs = allPts.map((p) => p[0]);
+    const ys = allPts.map((p) => p[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cz = (Math.min(...ys) + Math.max(...ys)) / 2;
+    return [cx, 0.8, cz] as [number, number, number];
+  }, [scene?.rooms]);
+
   if (!scene || scene.rooms.length === 0) {
     return (
       <div className="flex h-full w-full items-center justify-center text-sm text-neutral-400">
@@ -955,7 +966,7 @@ export function SceneViewer({ scene }: { scene: Scene | null }) {
         dpr={[1, 1.5]}
         gl={{ powerPreference: "high-performance", antialias: true }}
         shadows
-        camera={{ position: [7, 7, 7], fov: 45 }}
+        camera={{ position: [sceneCenter[0] + 5.5, 7.5, sceneCenter[2] + 5.5], fov: 42 }}
       >
         {/* Мягкий интерьерный свет */}
         <ambientLight intensity={0.45} />
@@ -1008,7 +1019,12 @@ export function SceneViewer({ scene }: { scene: Scene | null }) {
         {cameraMode === "orbit" && (
           <>
             <DragPlane draggingId={draggingId} onDragMove={handleDragMove} onDragEnd={handleDragEnd} />
-            <OrbitControls makeDefault enabled={!draggingId} maxPolarAngle={Math.PI / 2 - 0.05} />
+            <OrbitControls
+              makeDefault
+              enabled={!draggingId}
+              target={new THREE.Vector3(...sceneCenter)}
+              maxPolarAngle={Math.PI / 2 - 0.05}
+            />
           </>
         )}
 

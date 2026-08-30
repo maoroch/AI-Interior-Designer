@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ArchitectChoice } from "@/components/ArchitectChoice";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PreferencesForm } from "@/components/PreferencesForm";
+import { ProjectDashboardBar } from "@/components/ProjectDashboardBar";
+import { RoomVerification } from "@/components/RoomVerification";
 import { SceneViewer } from "@/components/SceneViewer";
 import { UploadPlan } from "@/components/UploadPlan";
 import { VariantSwitcher } from "@/components/VariantSwitcher";
@@ -28,6 +30,21 @@ export default function Home() {
   const project = useAppStore((s) => s.project);
   const scene = useAppStore((s) => s.scene);
   const refreshProject = useAppStore((s) => s.refreshProject);
+  const [roomsConfirmed, setRoomsConfirmed] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const pid = params.get("project_id");
+      if (pid) {
+        useAppStore.setState({ projectId: pid });
+        refreshProject().then(() => {
+          useAppStore.getState().refreshScene();
+          useAppStore.getState().refreshVariants();
+        });
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!project || project.stage === "ready" || project.stage === "failed") return;
@@ -94,8 +111,17 @@ export default function Home() {
         </div>
       )}
 
-      {/* Анкета предпочтений */}
-      {project && !project.preferences && stage !== "failed" && (
+      {/* Шаг 1: Экспликация помещений */}
+      {project && !roomsConfirmed && !project.preferences && stage !== "failed" && (
+        <div className="flex-1 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="w-full max-w-xl rounded-2xl border border-neutral-800 bg-[#161822] p-6 shadow-2xl">
+            <RoomVerification onConfirm={() => setRoomsConfirmed(true)} />
+          </div>
+        </div>
+      )}
+
+      {/* Шаг 2: Анкета предпочтений */}
+      {project && roomsConfirmed && !project.preferences && stage !== "failed" && (
         <div className="flex-1 flex items-center justify-center p-4 overflow-y-auto">
           <div className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-[#161822] p-6 shadow-2xl">
             <h2 className="mb-1 text-lg font-semibold text-white">Параметры дизайн-проекта</h2>
@@ -124,6 +150,7 @@ export default function Home() {
         stage !== "failed" && (
           <div className="flex flex-1 flex-col overflow-hidden">
             <VariantSwitcher />
+            <ProjectDashboardBar scene={scene} />
             <div className="flex flex-1 overflow-hidden">
               <div className="flex-1 relative">
                 <SceneViewer scene={scene} />

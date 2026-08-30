@@ -195,3 +195,49 @@ async def patch_furniture(project_id: str, furniture_id: str, patch: FurniturePa
     await scenes_collection().insert_one(new_doc)
 
     return scene.model_dump()
+
+
+class RoomUpdateItem(BaseModel):
+    id: str
+    type: str
+    height: float | None = None
+    label: str | None = None
+    enabled: bool = True
+
+
+class UpdateRoomsRequest(BaseModel):
+    rooms: list[RoomUpdateItem]
+
+
+@router.patch("/{project_id}/rooms")
+async def update_project_rooms(project_id: str, request: UpdateRoomsRequest):
+    """Обновляет экспликацию помещений (типы комнат, высоту потолков, подписи) от пользователя."""
+    project_doc = await projects_collection().find_one({"id": project_id})
+    if not project_doc:
+        raise HTTPException(404, "Проект не найден")
+
+    room_map = {r.id: r for r in request.rooms}
+
+    cursor = scenes_collection().find({"project_id": project_id})
+    async for scene_doc in cursor:
+        updated_rooms = []
+        for r in scene_doc.get("rooms", []):
+            rid = r.get("id")
+            if rid in room_map:
+                u = room_map[rid]
+                if not u.enabled:
+                    continue
+                r["type"] = u.type
+                if u.height is not None and u.height > 0:
+                    r["height"] = round(u.height, 2)
+                if u.label:
+                    r["label"] = u.label
+            updated_rooms.append(r)
+
+        await scenes_collection().update_one(
+            {"_id": scene_doc["_id"]},
+            {"$set": {"rooms": updated_rooms}}
+        )
+
+    return {"ok": True, "updated_count": len(request.rooms)}
+

@@ -69,6 +69,15 @@ export const api = {
   wsUrl: (projectId: string) =>
     `${API_URL.replace(/^http/, "ws")}/ws/projects/${projectId}`,
 
+  updateRooms: (
+    projectId: string,
+    rooms: Array<{ id: string; type: string; height?: number; label?: string; enabled?: boolean }>
+  ) =>
+    request<{ ok: boolean; updated_count: number }>(`/projects/${projectId}/rooms`, {
+      method: "PATCH",
+      body: JSON.stringify({ rooms }),
+    }),
+
   exportPdfUrl: (projectId: string, variantId?: string) =>
     `${API_URL}/projects/${projectId}/export/pdf${variantId ? `?variant_id=${variantId}` : ""}`,
 };
