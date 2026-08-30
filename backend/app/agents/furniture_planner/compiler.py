@@ -15,7 +15,10 @@ from typing import Any
 from shapely.geometry import Polygon, Point, box
 from shapely.affinity import rotate
 
-from app.agents.furniture_planner.math_engine import ForceDirectedRelaxationSolver
+from app.agents.furniture_planner.math_engine import (
+    ErgonomicOrientationCalculator,
+    ForceDirectedRelaxationSolver,
+)
 from app.models.scene import FurnitureItem, Room
 
 # Стандартные габариты мебели по умолчанию (Ширина, Высота, Глубина в метрах)
@@ -184,14 +187,9 @@ def compile_semantic_layout_to_3d(
             # Определяем горизонтальная ли стена или вертикальная
             is_vertical_wall = abs(ny) < abs(nx)
 
-            if not is_vertical_wall:
-                # Горизонтальная стена
-                rotation_deg = 180 if ny > 0 else 0
-                dist_inward = (d / 2.0) + WALL_INSET_BUFFER + offset_m
-            else:
-                # Вертикальная стена
-                rotation_deg = 90 if nx > 0 else 270
-                dist_inward = (d / 2.0) + WALL_INSET_BUFFER + offset_m
+            # Математический векторный расчёт ориентации мебели спинкой к стене, лицом внутрь
+            rotation_deg = ErgonomicOrientationCalculator.calculate_wall_facing_angle(nx, ny)
+            dist_inward = (d / 2.0) + WALL_INSET_BUFFER + offset_m
 
             # Положение вдоль стены
             t = 0.50
@@ -303,5 +301,22 @@ def compile_semantic_layout_to_3d(
     relaxed_dicts = ForceDirectedRelaxationSolver.relax_positions(dict_items, doors, bounds, iterations=8)
     for i, it in enumerate(placed_items):
         it.position = relaxed_dicts[i]["position"]
+
+    # 5. Эргономическая юстировка направления взгляда на фокусные объекты (Sightline Alignment)
+    tv_item = next((it for it in placed_items if "tv" in it.type), None)
+    if tv_item:
+        for it in placed_items:
+            if it.type in ("sofa", "armchair"):
+                # Вычисляем вектор взгляда на ТВ
+                focal_angle = ErgonomicOrientationCalculator.calculate_focal_orientation(
+                    (it.position[0], it.position[2]),
+                    (tv_item.position[0], tv_item.position[2]),
+                )
+                # Если диван стоит вдоль стены, проверяем соосность взгляда (угол должен быть ближе к ТВ)
+                # Разница углов не должна превышать 90 градусов от нормали стены
+                angle_diff = abs((it.rotation_deg - focal_angle + 180) % 360 - 180)
+                if angle_diff > 90:
+                    # Если диван случайно оказался спинкой к ТВ, разворачиваем его к ТВ
+                    it.rotation_deg = focal_angle
 
     return placed_items

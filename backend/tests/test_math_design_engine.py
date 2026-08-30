@@ -10,6 +10,7 @@ Unit and Integration tests for the Computational Interior Design Math Engine:
 import pytest
 from app.agents.furniture_planner.math_engine import (
     ChromaticBalanceCalculator,
+    ErgonomicOrientationCalculator,
     ForceDirectedRelaxationSolver,
     GoldenRatioScaler,
     OccupancyBudgetOptimizer,
@@ -17,6 +18,30 @@ from app.agents.furniture_planner.math_engine import (
     SMPTEViewingCalculator,
     PHI,
 )
+
+
+def test_ergonomic_orientation_wall_facing_angles():
+    # Северная стена (нормаль внутрь комнаты на юг +Y: (0, 1)) -> 0 deg (лицом на юг)
+    assert ErgonomicOrientationCalculator.calculate_wall_facing_angle(0.0, 1.0) == 0
+
+    # Южная стена (нормаль внутрь комнаты на север -Y: (0, -1)) -> 180 deg (лицом на север)
+    assert ErgonomicOrientationCalculator.calculate_wall_facing_angle(0.0, -1.0) == 180
+
+    # Западная стена (нормаль внутрь комнаты на восток +X: (1, 0)) -> 90 deg (лицом на восток)
+    assert ErgonomicOrientationCalculator.calculate_wall_facing_angle(1.0, 0.0) == 90
+
+    # Восточная стена (нормаль внутрь комнаты на запад -X: (-1, 0)) -> 270 deg (лицом на запад)
+    assert ErgonomicOrientationCalculator.calculate_wall_facing_angle(-1.0, 0.0) == 270
+
+
+def test_ergonomic_orientation_focal_sightlines():
+    sofa_pos = (4.0, 8.0)
+    tv_pos = (4.0, 2.0)  # ТВ на севере от дивана (dy = -6)
+
+    # Диван должен смотреть на север (180 deg)
+    angle = ErgonomicOrientationCalculator.calculate_focal_orientation(sofa_pos, tv_pos)
+    assert angle == 180
+
 
 
 def test_golden_ratio_constant_value():

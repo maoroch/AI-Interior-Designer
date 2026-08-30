@@ -97,6 +97,49 @@ class OccupancyBudgetOptimizer:
         return round(room_area_sqm * target_ratio, 2)
 
 
+class ErgonomicOrientationCalculator:
+    """
+    Математический векторный расчёт ориентации мебели (Sightlines, Ergonomics & Wall Alignment).
+    Гарантирует, что мебель стоит спинкой к стене, а направление взгляда (сиденье/лицевая часть)
+    направлено внутрь помещения, на телевизор или в фокусную зону комнаты.
+    """
+
+    @staticmethod
+    def calculate_wall_facing_angle(normal_x: float, normal_y: float) -> int:
+        """
+        Вычисляет точный угол поворота (в градусах [0..360)), при котором
+        передняя сторона мебели смотрит строго по вектору нормали внутрь комнаты.
+
+        Нормаль n = (nx, ny) направлена от стены внутрь комнаты:
+        - n = (0, 1)  (северная стена -> нормаль на юг +Y)  => 0 deg
+        - n = (0, -1) (южная стена    -> нормаль на север -Y) => 180 deg
+        - n = (1, 0)  (западная стена -> нормаль на восток +X)=> 90 deg
+        - n = (-1, 0) (восточная стена-> нормаль на запад -X) => 270 deg
+        """
+        # atan2(x, y) дает угол от вектора (0, 1) по часовой стрелке в плоскости Three.js
+        rad = math.atan2(normal_x, normal_y)
+        deg = math.degrees(rad)
+        return int((round(deg) + 360) % 360)
+
+    @staticmethod
+    def calculate_focal_orientation(
+        source_pos: tuple[float, float],
+        target_focal_pos: tuple[float, float],
+    ) -> int:
+        """
+        Вычисляет угол поворота для дивана или кресла, чтобы сиденье смотрело прямо
+        на фокусную точку (телевизор, камин, центр композиции).
+        """
+        dx = target_focal_pos[0] - source_pos[0]
+        dy = target_focal_pos[1] - source_pos[1]
+        length = math.hypot(dx, dy)
+        if length < 0.01:
+            return 0
+        rad = math.atan2(dx, dy)
+        deg = math.degrees(rad)
+        return int((round(deg) + 360) % 360)
+
+
 class ForceDirectedRelaxationSolver:
     """
     Физический релаксационный решатель взаимодействия объектов в 2D.
