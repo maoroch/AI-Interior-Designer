@@ -19,6 +19,7 @@ from app.agents.furniture_planner.math_engine import (
     ErgonomicOrientationCalculator,
     ForceDirectedRelaxationSolver,
 )
+from app.agents.furniture_planner.physics_engine import SpatialPhysicsEngine
 from app.models.scene import FurnitureItem, Room
 
 # Стандартные габариты мебели по умолчанию (Ширина, Высота, Глубина в метрах)
@@ -290,17 +291,25 @@ def compile_semantic_layout_to_3d(
             )
         )
 
-    # 4. Физическая релаксация связанных пар и тонкая доводка (Force-Directed Relaxation)
-    xs = [p[0] for p in room.polygon]
-    ys = [p[1] for p in room.polygon]
-    bounds = (min(xs), min(ys), max(xs), max(ys))
+    # 4. Пространственный физический движок против наложений и слипания (Spatial Physics Engine)
     dict_items = [
-        {"type": it.type, "position": it.position}
+        {
+            "id": it.id,
+            "type": it.type,
+            "position": it.position,
+            "dimensions": it.dimensions,
+            "rotation_deg": it.rotation_deg,
+        }
         for it in placed_items
     ]
-    relaxed_dicts = ForceDirectedRelaxationSolver.relax_positions(dict_items, doors, bounds, iterations=8)
+    resolved_dicts = SpatialPhysicsEngine.resolve_scene_physics(
+        items=dict_items,
+        room_polygon=room.polygon,
+        doors=doors,
+        max_iterations=45,
+    )
     for i, it in enumerate(placed_items):
-        it.position = relaxed_dicts[i]["position"]
+        it.position = resolved_dicts[i]["position"]
 
     # 5. Эргономическая юстировка направления взгляда на фокусные объекты (Sightline Alignment)
     tv_item = next((it for it in placed_items if "tv" in it.type), None)
