@@ -26,6 +26,8 @@ from app.agents.furniture_planner.math_engine import (
 from app.core.llm import complete_json
 from app.cv.semantic_bridge import generate_semantic_room_brief
 from app.cv.wall_graph import RoomFace, WallEdge
+from app.knowledge.fast_path import FastPathLayoutMatcher
+from app.knowledge.vector_engine import VectorRuleRAG
 from app.models.project import UserPreferences
 from app.models.scene import FurnitureItem, Room
 
@@ -162,19 +164,41 @@ def _get_rich_fallback_items(room: Room, preferences: UserPreferences | None) ->
 
 async def _select_furniture_set(room: Room, preferences: UserPreferences | None) -> list[dict[str, Any]]:
     prefs_summary = preferences.model_dump() if preferences else {}
+    style = prefs_summary.get("style", "Modern Minimalism")
+    r_type = room.type.value if hasattr(room.type, "value") else str(room.type)
+
+    # 1. Проверка Zero-LLM Fast-Path кэша (Мгновенное сопоставление с эталонами CubiCasa5K/LCSF)
+    matched_items, similarity, archetype_id = FastPathLayoutMatcher.match_golden_template(
+        room=room,
+        style=style,
+        similarity_threshold=0.88,
+    )
+    if matched_items:
+        logger.info(
+            "🚀 Zero-LLM Fast-Path selected for room '%s' (archetype: %s, sim: %.3f)",
+            room.id,
+            archetype_id,
+            similarity,
+        )
+        return matched_items
+
+    # 2. Нестандартная геометрия -> Точечный Vector RAG по стандартам Poché/Neufert
     room_face = _build_room_face_from_room(room)
-    brief = generate_semantic_room_brief(room_face, room_type=room.type.value)
+    brief = generate_semantic_room_brief(room_face, room_type=r_type)
+    rag_rules = VectorRuleRAG.format_rules_for_prompt(room_type=r_type, style=style)
+
+    system_prompt = f"{SYSTEM_PROMPT}\n\n{rag_rules}" if rag_rules else SYSTEM_PROMPT
 
     user_prompt = (
         f"{brief.text_summary}\n\n"
         f"Пожелания клиента:\n"
-        f"- Стиль: {prefs_summary.get('style', 'Modern')}\n"
+        f"- Стиль: {style}\n"
         f"- Состав семьи / дети / животные: {prefs_summary.get('family_members', 1)}, pets={prefs_summary.get('pets', False)}\n"
         f"- Бюджет: {prefs_summary.get('budget', 'Medium')}"
     )
 
     try:
-        result = await complete_json(SYSTEM_PROMPT, user_prompt)
+        result = await complete_json(system_prompt, user_prompt)
         items = result.get("items", [])
         if isinstance(items, list) and len(items) >= 3:
             return items

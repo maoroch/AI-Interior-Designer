@@ -44,12 +44,26 @@ async def run(rooms: list[Room]) -> list[Room]:
         for room in rooms
     ]
 
-    result = await complete_json(SYSTEM_PROMPT, f"Комнаты: {summary}")
-    room_types = result.get("room_types", {})
+    try:
+        result = await complete_json(SYSTEM_PROMPT, f"Комнаты: {summary}")
+        room_types = result.get("room_types", {})
+    except Exception as e:
+        room_types = {}
 
     for room in rooms:
         type_value = room_types.get(room.id)
-        if type_value in RoomType.__members__.values():
+        if type_value in [t.value for t in RoomType]:
             room.type = RoomType(type_value)
+        else:
+            # Геометрическая эвристика по площади и проёмам
+            area = _room_area(room)
+            if area >= 18.0:
+                room.type = RoomType.living_room
+            elif area >= 10.0:
+                room.type = RoomType.bedroom
+            elif area >= 4.0:
+                room.type = RoomType.hallway
+            else:
+                room.type = RoomType.bathroom
 
     return rooms

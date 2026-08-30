@@ -1,0 +1,213 @@
+{
+  "version": "1.0.0",
+  "source": "CubiCasa5K & LCSF Topological Archetypes Dataset",
+  "description": "Pre-vectorized geometric archetypes for zero-LLM fast-path interior layout synthesis",
+  "archetypes": [
+    {
+      "id": "CUBICASA_LIVING_RECT_STANDARD",
+      "room_type": "living_room",
+      "target_area_sqm_min": 14.0,
+      "target_area_sqm_max": 30.0,
+      "aspect_ratio_min": 1.1,
+      "aspect_ratio_max": 1.9,
+      "feature_vector": [0.0922, 0.4423, 0.2304, 0.2304, 0.3072, 0.6948, 0.3225, 0.0922],
+      "layout": [
+        {
+          "type": "sofa",
+          "anchor_wall": "south",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "tv_stand",
+          "anchor_wall": "north",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "coffee_table",
+          "anchor_wall": "center",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "rug",
+          "anchor_wall": "center",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "armchair",
+          "anchor_wall": "east",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "floor_lamp",
+          "anchor_wall": "south",
+          "placement": "right",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "plant",
+          "anchor_wall": "north",
+          "placement": "left",
+          "style": "Modern Minimalism"
+        }
+      ]
+    },
+    {
+      "id": "CUBICASA_BEDROOM_DOUBLE_MASTER",
+      "room_type": "bedroom",
+      "target_area_sqm_min": 10.0,
+      "target_area_sqm_max": 24.0,
+      "aspect_ratio_min": 1.0,
+      "aspect_ratio_max": 1.6,
+      "feature_vector": [0.2445, 0.1925, 0.1746, 0.3056, 0.4075, 0.6444, 0.4278, 0.1222],
+      "layout": [
+        {
+          "type": "bed",
+          "anchor_wall": "south",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "nightstand",
+          "anchor_wall": "south",
+          "placement": "left",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "nightstand",
+          "anchor_wall": "south",
+          "placement": "right",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "wardrobe",
+          "anchor_wall": "north",
+          "placement": "left",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "desk",
+          "anchor_wall": "east",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "rug",
+          "anchor_wall": "center",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "floor_lamp",
+          "anchor_wall": "south",
+          "placement": "right",
+          "style": "Modern Minimalism"
+        }
+      ]
+    },
+    {
+      "id": "CUBICASA_STUDIO_OPEN_ZONE",
+      "room_type": "studio",
+      "target_area_sqm_min": 20.0,
+      "target_area_sqm_max": 48.0,
+      "aspect_ratio_min": 1.2,
+      "aspect_ratio_max": 2.2,
+      "feature_vector": [0.2163, 0.5192, 0.2804, 0.1803, 0.4807, 0.522, 0.2524, 0.0721],
+      "layout": [
+        {
+          "type": "sofa",
+          "anchor_wall": "south",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "tv_stand",
+          "anchor_wall": "north",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "coffee_table",
+          "anchor_wall": "center",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "dining_table",
+          "anchor_wall": "west",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "desk",
+          "anchor_wall": "east",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "bookshelf",
+          "anchor_wall": "east",
+          "placement": "left",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "rug",
+          "anchor_wall": "center",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "floor_lamp",
+          "anchor_wall": "south",
+          "placement": "right",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "plant",
+          "anchor_wall": "north",
+          "placement": "right",
+          "style": "Modern Minimalism"
+        }
+      ]
+    },
+    {
+      "id": "CUBICASA_HALLWAY_ENTRY",
+      "room_type": "hallway",
+      "target_area_sqm_min": 3.0,
+      "target_area_sqm_max": 14.0,
+      "aspect_ratio_min": 1.2,
+      "aspect_ratio_max": 3.5,
+      "feature_vector": [0.3394, 0.1222, 0.5186, 0.4243, 0.0, 0.5706, 0.297, 0.0849],
+      "layout": [
+        {
+          "type": "wardrobe",
+          "anchor_wall": "west",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "bench",
+          "anchor_wall": "east",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "mirror",
+          "anchor_wall": "east",
+          "placement": "right",
+          "style": "Modern Minimalism"
+        },
+        {
+          "type": "rug",
+          "anchor_wall": "center",
+          "placement": "center",
+          "style": "Modern Minimalism"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "version": "1.0.0",
+  "description": "Ergonomic & Spatial Clearance Standards (Poché + Neufert Architects' Data + Panero Anthropometrics)",
+  "rules": [
+    {
+      "id": "DOOR_SWING_CLEARANCE",
+      "name": "Зона открывания дверей (Door Swing Arc)",
+      "category": "doors",
+      "severity": "CRITICAL",
+      "standard_source": "Ernst Neufert Architects' Data (Sec. 14: Doors & Corridors)",
+      "min_radius_m": 0.90,
+      "swing_angle_deg": 90,
+      "allowed_item_types": ["rug", "carpet"],
+      "description_ru": "Зона радиуса открывания двери (90 см) должна оставаться полностью свободной от твердой мебели."
+    },
+    {
+      "id": "WINDOW_SILL_CLEARANCE",
+      "name": "Створ оконного проёма (Window Standoff)",
+      "category": "windows",
+      "severity": "CRITICAL",
+      "standard_source": "Neufert Architects' Data (Sec. 12: Natural Lighting & Windows)",
+      "max_item_height_m": 1.00,
+      "min_standoff_m": 0.20,
+      "blocked_item_types": ["wardrobe", "bookshelf"],
+      "description_ru": "Высокие шкафы и стеллажи запрещено размещать в створе оконного проёма, перекрывая естественный свет."
+    },
+    {
+      "id": "TV_SIGHTLINE_ALIGNMENT",
+      "name": "Соосность линии взгляда на ТВ (SMPTE & Panero)",
+      "category": "sightlines",
+      "severity": "ERROR",
+      "standard_source": "SMPTE EG-18 & Panero 'Human Dimension & Interior Space' (p. 182)",
+      "max_deviation_angle_deg": 25.0,
+      "min_distance_m": 1.80,
+      "max_distance_m": 3.80,
+      "target_pairs": [["sofa", "tv_stand"], ["armchair", "tv_stand"]],
+      "description_ru": "Угол между нормалью взгляда сидящего на диване и направлением на экран ТВ не должен превышать 25 градусов."
+    },
+    {
+      "id": "MAIN_PASSAGE_CIRCULATION",
+      "name": "Главный проход в помещении (Main Traffic Aisle)",
+      "category": "passages",
+      "severity": "ERROR",
+      "standard_source": "Neufert Architects' Data (Sec. 14: Circulation)",
+      "min_clear_width_m": 0.85,
+      "description_ru": "Ширина основного прохода между функциональными зонами должна быть не менее 85 см."
+    },
+    {
+      "id": "COFFEE_TABLE_CLEARANCE",
+      "name": "Зазор между диваном и журнальным столиком",
+      "category": "furniture_clearance",
+      "severity": "WARNING",
+      "standard_source": "Poché Ergonomics Clearance Dataset (Table C-4)",
+      "min_gap_m": 0.35,
+      "max_gap_m": 0.55,
+      "description_ru": "Оптимальное расстояние между кромкой дивана и столиком составляет 35-55 см для удобного доступа к напиткам и прохода ног."
+    },
+    {
+      "id": "DINING_CHAIR_PULLOUT",
+      "name": "Зона отодвигания обеденного стула",
+      "category": "furniture_clearance",
+      "severity": "ERROR",
+      "standard_source": "Panero & Zelnik 'Human Dimension' (Dining Spaces, p. 145)",
+      "min_pullout_space_m": 0.65,
+      "description_ru": "За спинкой стула у обеденного стола требуется минимум 65 см свободного пространства для комфортной посадки."
+    },
+    {
+      "id": "BED_LATERAL_PASSAGE",
+      "name": "Боковые проходы вокруг двуспальной кровати",
+      "category": "bedroom",
+      "severity": "ERROR",
+      "standard_source": "Neufert Architects' Data (Sec. 21: Bedrooms)",
+      "min_side_aisle_m": 0.60,
+      "description_ru": "С обеих сторон двуспальной кровати необходим проход шириной не менее 60 см для заправки постели и доступа."
+    },
+    {
+      "id": "NON_PENETRATION_SOLID_GAP",
+      "name": "Эргономический зазор между твердыми предметами мебели",
+      "category": "solid_separation",
+      "severity": "CRITICAL",
+      "standard_source": "Poché Spatial Separation Standard (Sec. 2.1)",
+      "min_solid_gap_m": 0.15,
+      "description_ru": "Твердые предметы мебели (стол, шкаф, стеллаж) не должны пересекаться или слипаться (зазор >= 15 см)."
+    }
+  ]
+}
